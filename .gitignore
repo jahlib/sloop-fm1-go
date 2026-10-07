@@ -1,0 +1,15 @@
+# Build output and local machine files
+local.properties
+.gradle/
+build/
+app/build/
+android/local.properties
+*.iml
+.idea/
+.kotlin/
+*.apk
+*.aab
+# Signing material
+*.jks
+*.keystore
+keystore.properties
