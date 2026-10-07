@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -442,7 +443,7 @@ class DeviceController(context: Context) {
      */
     suspend fun smpUpload(slot: Int, name: String, zones: List<Smp.ZoneIn>,
                           onProgress: (Float) -> Unit = {}) {
-        val (hdr, data) = Smp.buildSlot(name, zones)
+        val (hdr, data) = withContext(Dispatchers.Default) { Smp.buildSlot(name, zones) }
         var rc = Parse.smpRc(request(Requests.smpBegin(slot), timeout = 1000, retries = 0))
         if (rc != 0) throw Smp.SlotError("begin failed (rc $rc)")
         var off = 0

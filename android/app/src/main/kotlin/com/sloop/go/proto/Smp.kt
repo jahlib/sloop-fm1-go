@@ -127,15 +127,16 @@ object Smp {
             }
         }
         val step = sr.toDouble() / to
-        val out = ArrayList<Double>((a.size * to / sr) + 2)
+        val out = DoubleArray(if (a.size > 1) (a.size - 1) / step.let { ceil(it).toInt() + 1 } else 0)
+        var k = 0
         var p = 0.0
-        while (p < a.size - 1) {
-            val i = floor(p).toInt()
+        while (p < a.size - 1 && k < out.size) {
+            val i = p.toInt()
             val f = p - i
-            out.add(a[i] * (1 - f) + a[i + 1] * f)
+            out[k++] = a[i] * (1 - f) + a[i + 1] * f
             p += step
         }
-        return out.toDoubleArray()
+        return if (k == out.size) out else out.copyOf(k)
     }
 
     /** Python's round(): half to even. */

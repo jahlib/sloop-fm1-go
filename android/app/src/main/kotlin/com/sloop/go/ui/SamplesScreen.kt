@@ -80,7 +80,9 @@ import com.sloop.go.audio.Audio
 import com.sloop.go.device.DeviceState
 import com.sloop.go.device.Link
 import com.sloop.go.proto.Smp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 private fun displayName(ctx: Context, uri: Uri): String {
     var name: String? = null
@@ -125,11 +127,15 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
             val fname = displayName(ctx, uri)
             vm.launch {
                 try {
-                    val (sr, x) = Audio.decode(ctx, uri)
-                    val r = Smp.resample(x, sr, Smp.RATE)
+                    val r = withContext(Dispatchers.Default) {
+                        val (sr, x) = Audio.decode(ctx, uri)
+                        Smp.resample(x, sr, Smp.RATE)
+                    }
                     if (r.isEmpty()) throw Smp.SlotError("no audio")
-                    ed.loadChopSource(r, fname.substringBeforeLast('.')
-                        .uppercase().filter { it.code in 32..126 }.take(8).ifBlank { "CHOP" })
+                    withContext(Dispatchers.Default) {
+                        ed.loadChopSource(r, fname.substringBeforeLast('.')
+                            .uppercase().filter { it.code in 32..126 }.take(8).ifBlank { "CHOP" })
+                    }
                     if (ed.name.isBlank()) ed.name = ed.srcName
                     ed.say("Loaded $fname (${secs(r.size)})")
                 } catch (e: Exception) { ed.say("Cannot read: $fname (${e.message})", true) }
@@ -141,11 +147,13 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
                     val fname = displayName(ctx, uri)
                     if (ed.files.size >= Smp.MAX_ZONES) { full = true; break }
                     try {
-                        val (sr, x) = Audio.decode(ctx, uri)
-                        val r = Smp.resample(x, sr, Smp.RATE)
-                        if (r.isEmpty()) throw Smp.SlotError("no audio")
+                        val s = withContext(Dispatchers.Default) {
+                            val (sr, x) = Audio.decode(ctx, uri)
+                            Smp.normalize(Smp.resample(x, sr, Smp.RATE))
+                        }
+                        if (s.isEmpty()) throw Smp.SlotError("no audio")
                         val stem = fname.substringBeforeLast('.')
-                        ed.files = ed.files + Smp.ZoneIn(fname, Smp.normalize(r), Smp.rootFromName(stem))
+                        ed.files = ed.files + Smp.ZoneIn(fname, s, Smp.rootFromName(stem))
                         if (ed.name.isBlank()) ed.name =
                             stem.uppercase().filter { it.code in 32..126 }.take(8)
                     } catch (e: Exception) { ed.say("Cannot read: $fname (${e.message})", true) }
@@ -161,23 +169,27 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
     }
     fun recordToggle() {
         if (ed.recording) {
-            val rec = ed.stopRecording()
+            ed.recording = false
             vm.launch {
-                val r = Smp.resample(rec, Audio.REC_RATE, Smp.RATE)
-                if (r.isEmpty()) { ed.say("Nothing recorded", true); return@launch }
-                if (ed.mode == SamplesEditor.Mode.CHOP) {
-                    ed.loadChopSource(r, "REC")
-                    if (ed.name.isBlank()) ed.name = "REC"
-                    ed.say("Recorded ${secs(r.size)}")
-                } else {
-                    if (ed.files.size >= Smp.MAX_ZONES) {
-                        ed.say("A slot holds ${Smp.MAX_ZONES} files max", true); return@launch
+                try {
+                    val rec = withContext(Dispatchers.Default) { ed.stopRecording() }
+                    val r = withContext(Dispatchers.Default) { Smp.resample(rec, Audio.REC_RATE, Smp.RATE) }
+                    if (r.isEmpty()) { ed.say("Nothing recorded", true); return@launch }
+                    if (ed.mode == SamplesEditor.Mode.CHOP) {
+                        withContext(Dispatchers.Default) { ed.loadChopSource(r, "REC") }
+                        if (ed.name.isBlank()) ed.name = "REC"
+                        ed.say("Recorded ${secs(r.size)}")
+                    } else {
+                        if (ed.files.size >= Smp.MAX_ZONES) {
+                            ed.say("A slot holds ${Smp.MAX_ZONES} files max", true); return@launch
+                        }
+                        val fname = "REC ${ed.files.size + 1}"
+                        val s = withContext(Dispatchers.Default) { Smp.normalize(r) }
+                        ed.files = ed.files + Smp.ZoneIn("$fname.wav", s, 60)
+                        if (ed.name.isBlank()) ed.name = "REC"
+                        ed.say("Recorded ${secs(r.size)} → $fname")
                     }
-                    val fname = "REC ${ed.files.size + 1}"
-                    ed.files = ed.files + Smp.ZoneIn("$fname.wav", Smp.normalize(r), 60)
-                    if (ed.name.isBlank()) ed.name = "REC"
-                    ed.say("Recorded ${secs(r.size)} → $fname")
-                }
+                } catch (e: Exception) { ed.say("Recording failed: ${e.message}", true) }
             }
         } else {
             if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)

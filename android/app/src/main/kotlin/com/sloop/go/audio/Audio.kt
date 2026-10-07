@@ -131,26 +131,30 @@ object Audio {
             val min = AudioRecord.getMinBufferSize(REC_RATE,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
             if (min <= 0) return false
-            val r = AudioRecord(MediaRecorder.AudioSource.MIC, REC_RATE,
-                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, max(min, 8192))
+            val r = try {
+                AudioRecord(MediaRecorder.AudioSource.MIC, REC_RATE,
+                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, max(min, 8192))
+            } catch (e: SecurityException) { return false }
             if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); return false }
+            try { r.startRecording() } catch (e: Exception) { r.release(); return false }
             chunks.clear(); total = 0; level = 0f; seconds = 0f
             rec = r
             recording = true
-            r.startRecording()
             thread = Thread {
-                val buf = ShortArray(4096)
-                val cap = REC_RATE * MAX_REC_SECONDS
-                while (recording && total < cap) {
-                    val n = r.read(buf, 0, min(buf.size, cap - total))
-                    if (n <= 0) break
-                    var pk = 0
-                    for (i in 0 until n) pk = max(pk, abs(buf[i].toInt()))
-                    level = pk / 32768f
-                    chunks.add(buf.copyOf(n))
-                    total += n
-                    seconds = total.toFloat() / REC_RATE
-                }
+                try {
+                    val buf = ShortArray(4096)
+                    val cap = REC_RATE * MAX_REC_SECONDS
+                    while (recording && total < cap) {
+                        val n = r.read(buf, 0, min(buf.size, cap - total))
+                        if (n <= 0) break
+                        var pk = 0
+                        for (i in 0 until n) pk = max(pk, abs(buf[i].toInt()))
+                        level = pk / 32768f
+                        chunks.add(buf.copyOf(n))
+                        total += n
+                        seconds = total.toFloat() / REC_RATE
+                    }
+                } catch (_: Exception) { /* released while reading */ }
             }.also { it.start() }
             return true
         }
@@ -158,8 +162,10 @@ object Audio {
         /** Stops and returns the recording as mono floats at REC_RATE. */
         fun stop(): DoubleArray {
             recording = false
-            thread?.join(500); thread = null
-            rec?.let { r -> runCatching { r.stop() }; r.release() }; rec = null
+            val r = rec
+            if (r != null) runCatching { r.stop() }    /* also unblocks a pending read() */
+            thread?.join(800); thread = null
+            r?.release(); rec = null
             level = 0f
             val x = DoubleArray(total)
             var at = 0
