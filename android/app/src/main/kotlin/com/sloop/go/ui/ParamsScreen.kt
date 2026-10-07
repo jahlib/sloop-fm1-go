@@ -55,15 +55,23 @@ import com.sloop.go.device.DeviceState
 import com.sloop.go.device.Link
 import com.sloop.go.proto.Desc
 
-/** A page inside a group: a title, a scope (0 = P_*, 1 = G_*) and the parameter ids it shows. */
-private data class Page(val title: String, val scope: Int, val ids: List<Int>)
+/**
+ * A page inside a group: a title, a scope (0 = P_*, 1 = G_*) and the parameter ids it shows.
+ * [trackIds] are ids in the page that are track parameters (P_*) although the page's scope is global.
+ */
+private data class Page(val title: String, val scope: Int, val ids: List<Int>, val trackIds: Set<Int> = emptySet())
+
+private const val P_TFLT = 50   // SLOOP 2.4: the track's filter; absent on older firmware (pe0 <= 50)
 private data class Group(val title: String, val pages: List<Page>)
 
 private val PINNED = setOf("Global", "Master")
 
 private fun layout(pe0: Int): List<Group> = listOf(
     Group("Global", listOf(Page("GLOBAL", 1, listOf(0, 1, 2, 3)))),
-    Group("Master", listOf(Page("MASTER", 1, listOf(27, 28, 29, 30)))),
+    Group("Master", listOf(
+        if (pe0 > P_TFLT) Page("MASTER", 1, listOf(27, 28, 29, P_TFLT), setOf(P_TFLT))
+        else Page("MASTER", 1, listOf(27, 28, 29)),
+    )),
     Group("Envelope", listOf(Page("ENV", 0, listOf(1, 2, 3, 4)), Page("ENV DEST", 0, listOf(5, 6, 7, 8)))),
     Group("LFO", listOf(Page("LFO", 0, listOf(9, 10, 11, 12)), Page("LFO DEST", 0, listOf(13, 14, 15, 16)))),
     Group("Engine edit", listOf(
@@ -254,9 +262,10 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                     if (closed) return@Card
                     val pages = group.pages.mapNotNull { page ->
                         val rows = page.ids.mapNotNull { id ->
-                            val d = descOf(state, page.scope, id) ?: return@mapNotNull null
-                            if (!shouldShow(d)) return@mapNotNull null
-                            Triple(page.scope, id, d)
+                            val sc = if (id in page.trackIds) 0 else page.scope
+                            val d0 = descOf(state, sc, id) ?: return@mapNotNull null
+                            if (!shouldShow(d0)) return@mapNotNull null
+                            Triple(sc, id, if (sc == 0 && id == P_TFLT && page.title == "MASTER") d0.copy(label = "TFLT") else d0)
                         }
                         if (rows.isEmpty()) null else page.title to rows
                     }
