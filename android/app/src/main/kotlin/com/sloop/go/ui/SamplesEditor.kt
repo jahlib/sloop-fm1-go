@@ -28,12 +28,13 @@ class SamplesEditor {
 
     // ---- recording (shared by both modes) ----
     val recorder = Audio.Recorder()
+    var mic by mutableStateOf<Audio.MicOption?>(null)   // null: default ("Mic" preset)
     var recSeconds by mutableFloatStateOf(0f)
     var recLevel by mutableFloatStateOf(0f)
     var recording by mutableStateOf(false)
 
     fun startRecording(): Boolean {
-        if (!recorder.start()) { say("Cannot open the microphone", true); return false }
+        if (!recorder.start(mic ?: Audio.micDefault())) { say("Cannot open the microphone", true); return false }
         recording = true
         return true
     }

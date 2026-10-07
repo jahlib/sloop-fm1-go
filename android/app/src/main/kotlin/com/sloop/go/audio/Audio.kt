@@ -5,7 +5,9 @@ package com.sloop.go.audio
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaCodec
@@ -116,6 +118,36 @@ object Audio {
 
     // ---------------------------------------------------------------- mic ---
 
+    /** A microphone choice: an AudioSource preset (no device pinned) or a concrete input device. */
+    class MicOption(val label: String, val source: Int, val device: AudioDeviceInfo? = null)
+
+    /** The plain "Mic" preset, when nothing was picked. */
+    fun micDefault() = MicOption("Mic", MediaRecorder.AudioSource.MIC)
+
+    /** Mics to offer: source presets (voice call, camera back, raw) + the inputs the phone reports. */
+    fun mics(ctx: Context): List<MicOption> {
+        val out = mutableListOf(
+            MicOption("Mic", MediaRecorder.AudioSource.MIC),
+            MicOption("Voice call", MediaRecorder.AudioSource.VOICE_COMMUNICATION),
+            MicOption("Camera back", MediaRecorder.AudioSource.CAMCORDER),
+            MicOption("Raw", MediaRecorder.AudioSource.UNPROCESSED),
+        )
+        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        for (d in am.getDevices(AudioManager.GET_DEVICES_INPUTS)) {
+            val label = when (d.type) {
+                AudioDeviceInfo.TYPE_BUILTIN_MIC ->
+                    d.address?.takeIf { it.isNotBlank() }?.let { "Mic · $it" }
+                AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Headset mic"
+                AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET -> "USB mic"
+                AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth mic"
+                AudioDeviceInfo.TYPE_BLE_HEADSET -> "BLE mic"
+                else -> null
+            } ?: continue
+            out += MicOption(label, MediaRecorder.AudioSource.MIC, d)
+        }
+        return out
+    }
+
     /** AudioRecord wrapper: 44100 Hz mono PCM16 into a growing buffer, with a live peak level. */
     class Recorder {
         @Volatile var level = 0f; private set
@@ -126,16 +158,22 @@ object Audio {
         private val chunks = ArrayList<ShortArray>()
         @Volatile private var total = 0
 
-        fun start(): Boolean {
+        fun start(mic: MicOption): Boolean {
             if (recording) return true
             val min = AudioRecord.getMinBufferSize(REC_RATE,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
             if (min <= 0) return false
             val r = try {
-                AudioRecord(MediaRecorder.AudioSource.MIC, REC_RATE,
-                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, max(min, 8192))
-            } catch (e: SecurityException) { return false }
+                AudioRecord.Builder()
+                    .setAudioSource(mic.source)
+                    .setAudioFormat(AudioFormat.Builder().setSampleRate(REC_RATE)
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
+                    .setBufferSizeInBytes(max(min, 8192))
+                    .build()
+            } catch (e: Exception) { return false }
             if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); return false }
+            if (mic.device != null && !r.setPreferredDevice(mic.device)) { r.release(); return false }
             try { r.startRecording() } catch (e: Exception) { r.release(); return false }
             chunks.clear(); total = 0; level = 0f; seconds = 0f
             rec = r

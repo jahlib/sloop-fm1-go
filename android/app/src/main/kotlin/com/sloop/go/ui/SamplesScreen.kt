@@ -164,6 +164,8 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
     }
 
     // ---- mic recording ----
+    val mics = remember { Audio.mics(ctx) }
+    if (ed.mic == null) ed.mic = mics.first()
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) ed.startRecording() else ed.say("Microphone permission denied", true)
     }
@@ -175,10 +177,13 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
                     val rec = withContext(Dispatchers.Default) { ed.stopRecording() }
                     val r = withContext(Dispatchers.Default) { Smp.resample(rec, Audio.REC_RATE, Smp.RATE) }
                     if (r.isEmpty()) { ed.say("Nothing recorded", true); return@launch }
+                    val pk = r.fold(0.0) { a, v -> if (v > a) v else if (-v > a) -v else a }
+                    val pkInfo = "peak ${(pk * 100).toInt()}%" +
+                        (if (pk < 0.001) " — silence, try another mic" else "")
                     if (ed.mode == SamplesEditor.Mode.CHOP) {
                         withContext(Dispatchers.Default) { ed.loadChopSource(r, "REC") }
                         if (ed.name.isBlank()) ed.name = "REC"
-                        ed.say("Recorded ${secs(r.size)}")
+                        ed.say("Recorded ${secs(r.size)} · $pkInfo", pk < 0.001)
                     } else {
                         if (ed.files.size >= Smp.MAX_ZONES) {
                             ed.say("A slot holds ${Smp.MAX_ZONES} files max", true); return@launch
@@ -187,7 +192,7 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
                         val s = withContext(Dispatchers.Default) { Smp.normalize(r) }
                         ed.files = ed.files + Smp.ZoneIn("$fname.wav", s, 60)
                         if (ed.name.isBlank()) ed.name = "REC"
-                        ed.say("Recorded ${secs(r.size)} → $fname")
+                        ed.say("Recorded ${secs(r.size)} → $fname · $pkInfo", pk < 0.001)
                     }
                 } catch (e: Exception) { ed.say("Recording failed: ${e.message}", true) }
             }
@@ -285,6 +290,10 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
                                     else MaterialTheme.colorScheme.primary)
                             Spacer(Modifier.width(6.dp))
                             Text(if (ed.recording) "Stop" else "Record")
+                        }
+                        ed.mic?.let { cur ->
+                            MiniPicker("", mics.map { it.label to it }, cur,
+                                enabled = !ed.recording) { ed.mic = it }
                         }
                         if (ed.recording) {
                             Box(Modifier.size(10.dp)
@@ -672,10 +681,11 @@ private fun ChopPane(ed: SamplesEditor) {
 
 /** Compact dropdown for numeric/note options. */
 @Composable
-private fun <T> MiniPicker(label: String, options: List<Pair<String, T>>, value: T, onChange: (T) -> Unit) {
+private fun <T> MiniPicker(label: String, options: List<Pair<String, T>>, value: T,
+                           enabled: Boolean = true, onChange: (T) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        OutlinedButton(onClick = { open = true }) {
+        OutlinedButton(onClick = { open = true }, enabled = enabled) {
             Text((if (label.isBlank()) "" else "$label ") +
                 (options.firstOrNull { it.second == value }?.first ?: "$value"),
                 style = MaterialTheme.typography.labelSmall)
