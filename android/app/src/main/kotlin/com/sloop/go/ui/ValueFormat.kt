@@ -13,6 +13,8 @@ fun noteName(n: Int): String = NOTE_NAMES[((n % 12) + 12) % 12] + (n / 12 - 1)
 /** Human-readable value, close to the device (exact formatting is not required by the protocol). */
 fun formatValue(desc: Desc?, value: Int): String {
     if (desc == null) return value.toString()
+    // Some F_INT params carry injected names (FM6 ALG/PTCH) — they display like enums.
+    if (desc.names.isNotEmpty()) return desc.names.getOrNull(value - desc.min) ?: value.toString()
     return when (desc.fmt) {
         Fmt.ENUM -> desc.names.getOrNull(value - desc.min) ?: value.toString()
         Fmt.ONOFF -> if (value != 0) "ON" else "OFF"
@@ -43,5 +45,5 @@ fun formatValue(desc: Desc?, value: Int): String {
 /** True when the parameter is best shown as a toggle. */
 fun isToggle(desc: Desc?): Boolean = desc?.fmt == Fmt.ONOFF
 
-/** True when the parameter is an enumeration (named choices). */
-fun isEnum(desc: Desc?): Boolean = desc?.fmt == Fmt.ENUM
+/** True when the parameter is an enumeration (named choices, incl. injected F_INT names). */
+fun isEnum(desc: Desc?): Boolean = desc != null && (desc.fmt == Fmt.ENUM || desc.names.isNotEmpty())

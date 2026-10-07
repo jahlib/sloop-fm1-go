@@ -87,6 +87,15 @@ object Requests {
     fun fm6List() = Req(Cmd.FM6_LIST, IntArray(0))
     fun fm6Erase(index: Int) = Req(Cmd.FM6_ERASE, ia(index and 0x7F))
 
+    // User sample slots USR1..4 (EDITOR_PROTOCOL.md cmds 11..15). Data/header travel pack7'd.
+    fun smpBegin(slot: Int) = Req(Cmd.SMP_BEGIN, ia(slot and 0x7F))
+    fun smpWrite(slot: Int, off: Int, bytes: ByteArray, pos: Int, len: Int) =
+        Req(Cmd.SMP_WRITE, ia(slot and 0x7F, off and 0x7F, (off shr 7) and 0x7F, (off shr 14) and 0x7F) +
+            Smp.pack7(bytes.copyOfRange(pos, pos + len)))
+    fun smpEnd(slot: Int, hdr: ByteArray) = Req(Cmd.SMP_END, ia(slot and 0x7F) + Smp.pack7(hdr))
+    fun smpErase(slot: Int) = Req(Cmd.SMP_ERASE, ia(slot and 0x7F))
+    fun smpInfo() = Req(Cmd.SMP_INFO, IntArray(0))
+
     /** value = null deletes the lock on (step, param). */
     fun lockSet(tr: Int, step: Int, param: Int, value: Int? = null) =
         Req(Cmd.LOCK_SET, if (value == null) ia(tr and 0x7F, step and 0x7F, param and 0x7F)
@@ -98,6 +107,8 @@ fun replyMatches(cmd: Int, args: IntArray, a: IntArray): Boolean = when (cmd) {
     Cmd.GET, Cmd.SET, Cmd.DESC -> a.getOrNull(0) == args.getOrNull(0) && a.getOrNull(1) == args.getOrNull(1)
     Cmd.STEP_GET, Cmd.STEP_SET, Cmd.NAMES,
     Cmd.SMP_BEGIN, Cmd.SMP_END, Cmd.SMP_ERASE -> a.getOrNull(0) == args.getOrNull(0)
+    Cmd.SMP_WRITE -> a.getOrNull(0) == args.getOrNull(0) && a.getOrNull(1) == args.getOrNull(1) &&
+        a.getOrNull(2) == args.getOrNull(2) && a.getOrNull(3) == args.getOrNull(3)
     Cmd.PROJECT -> a.getOrNull(0) == args.getOrNull(0) && a.getOrNull(1) == args.getOrNull(1)
     Cmd.UP_LIST, Cmd.UP_GET, Cmd.UP_PUT, Cmd.UP_STORE, Cmd.UP_LOAD, Cmd.UP_ERASE,
     Cmd.TRACK_MIX, Cmd.TRACK_DUMP, Cmd.DRUM_STEP -> a.getOrNull(0) == args.getOrNull(0)

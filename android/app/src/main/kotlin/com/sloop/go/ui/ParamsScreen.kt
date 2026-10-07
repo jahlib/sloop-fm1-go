@@ -189,8 +189,13 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                         }
                     }
                     run {
+                        val fm6 = !state.isDrum && state.dump?.engine == state.fm6Engine
                         val name = if (state.isDrum) {
                             state.pdesc.getOrNull(info.pe0)?.names?.getOrNull(state.paramValue(info.pe0)) ?: "Kit"
+                        } else if (fm6) {
+                            state.pdesc.getOrNull(info.pe0 + 7)?.names
+                                ?.getOrNull(state.paramValue(info.pe0 + 7))
+                                ?: "Patch ${state.paramValue(info.pe0 + 7) + 1}"
                         } else state.dump?.let { d ->
                             state.presetNames[d.engine]?.getOrNull(d.preset) ?: "Preset ${d.preset + 1}"
                         } ?: "Preset"
@@ -203,7 +208,7 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                                 Spacer(Modifier.width(6.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(
-                                        if (state.isDrum) "Kit" else "Preset",
+                                        if (state.isDrum) "Kit" else if (fm6) "Patch" else "Preset",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )

@@ -12,10 +12,12 @@ import com.sloop.go.proto.Cmd
 import com.sloop.go.proto.Desc
 import com.sloop.go.proto.DrumStep
 import com.sloop.go.proto.Dump
+import com.sloop.go.proto.Fmt
 import com.sloop.go.proto.Info
 import com.sloop.go.proto.Parse
 import com.sloop.go.proto.Req
 import com.sloop.go.proto.Requests
+import com.sloop.go.proto.Smp
 import com.sloop.go.proto.Step
 import com.sloop.go.proto.StepLock
 import com.sloop.go.proto.frame
@@ -188,6 +190,7 @@ class DeviceController(context: Context) {
         loadSteps(info, dump)
         loadStepExtras(info)
         fm6Refresh()
+        smpRefresh()
         // Ask the device to push live changes (v4 WATCH 3; v2/v3 answer 1).
         runCatching { request(Requests.watch(3)) }
     }
@@ -242,6 +245,9 @@ class DeviceController(context: Context) {
         if (s.link != Link.READY) return
         val track = s.selectedTrack
         val desc = (if (scope == 0) s.pdesc else s.gdesc).getOrNull(id)
+        // Discrete choices write once: stepping through them would flip intermediate patches/engines.
+        val discrete = desc != null &&
+            (desc.fmt == Fmt.ENUM || desc.fmt == Fmt.ONOFF || desc.names.isNotEmpty())
         val chunk = maxOf(1, ((desc?.max ?: 127) - (desc?.min ?: 0)) / 12)
         val ok = synchronized(pendingLock) {
             val base = edits.filterIsInstance<UserEdit.Parameter>()
@@ -253,7 +259,7 @@ class DeviceController(context: Context) {
                 if (p is UserEdit.Parameter && p.scope == scope && p.id == id && p.track == track)
                     edits.removeAt(i)
             }
-            val count = kotlin.math.abs(value - base) / chunk
+            val count = if (discrete) 0 else kotlin.math.abs(value - base) / chunk
             val values = if (count <= 1) listOf(value)
                 else (1..count.coerceAtMost(12)).map { base + (value - base) * it / count.coerceAtMost(12) }
             if (edits.size + values.size > maxEdits) null else {
@@ -320,6 +326,7 @@ class DeviceController(context: Context) {
                 _state.update { it.copy(tracks = t, selectedTrack = t.sel, dump = dump).withQueuedEdits() }
                 loadSteps(info, dump)
                 loadStepExtras(info)
+                applyFm6Names()
             }
             _state.update { it.copy(link = Link.READY,
                 status = if (result.isSuccess) "Connected" else "Track load failed — select it again") }
@@ -338,7 +345,33 @@ class DeviceController(context: Context) {
         if (!_state.value.fm6Supported) return false
         val list = runCatching { Parse.fm6List(request(Requests.fm6List())) }.getOrNull() ?: return false
         _state.update { it.copy(fm6 = list) }
+        applyFm6Names()
         return true
+    }
+
+    /**
+     * The names the device shows for FM6's ALG (PAT, 1..32) and PTCH (F1..F8, B1..B27):
+     * DESC sends none for F_INT, so the web editor injects them (editor.html fm6Names()). Bank slots
+     * also carry the stored patch name. Applies only while the selected track plays FM6.
+     */
+    private fun applyFm6Names() {
+        _state.update { s ->
+            val info = s.info ?: return@update s
+            val fm6 = s.fm6 ?: return@update s
+            if (s.dump?.engine != s.fm6Engine) return@update s
+            val list = s.pdesc.toMutableList()
+            list.getOrNull(info.pe0)?.takeIf { it.label == "ALG" && it.fmt == Fmt.INT }?.let {
+                list[info.pe0] = it.copy(names = listOf("PAT") + (1..32).map { n -> "$n" })
+            }
+            list.getOrNull(info.pe0 + 7)?.takeIf { it.label == "PTCH" && it.fmt == Fmt.INT }?.let { d ->
+                list[info.pe0 + 7] = d.copy(names = List(fm6.factory + fm6.bank) { i ->
+                    val nm = if (i < fm6.factory) "F${i + 1}" else "B${i - fm6.factory + 1}"
+                    val slot = fm6.slots.getOrNull(i)
+                    if (slot != null && slot.used && slot.name.isNotBlank()) "$nm · ${slot.name}" else nm
+                })
+            }
+            s.copy(pdesc = list)
+        }
     }
 
     /** Reads a patch: target 0 a track's own, 1 a bank slot, 2 a factory patch. */
@@ -381,6 +414,77 @@ class DeviceController(context: Context) {
         request(Requests.set(1, eng, s.fm6Engine))
         markSelfReload()
         reloadAfterChange()
+    }
+
+    // ------------------------------------------------- user samples (USR1..4) ---
+
+    /** Re-reads SMP_INFO into the state. False when the device does not answer. */
+    suspend fun smpRefresh(): Boolean {
+        val s = _state.value
+        if (s.link != Link.LOADING && s.link != Link.READY) return false
+        val info = runCatching { Parse.smpInfo(request(Requests.smpInfo(), timeout = 600)) }
+            .getOrNull() ?: return false
+        _state.update { it.copy(smp = info) }
+        return true
+    }
+
+    /** Erases a whole USR slot (~1 s on the device). rc: 0 ok. */
+    suspend fun smpErase(slot: Int): Int {
+        val rc = Parse.smpRc(request(Requests.smpErase(slot), timeout = 2500, retries = 0))
+        if (rc == 0) smpRefresh()
+        return rc
+    }
+
+    /**
+     * Builds and writes a slot: BEGIN (clears it), WRITE in 256-byte chunks at DATA_OFF + n
+     * (a write at a 4 KiB boundary erases that sector on the device), END with the header.
+     * [onProgress] gets 0..1. Throws SlotError/IOException on failure.
+     */
+    suspend fun smpUpload(slot: Int, name: String, zones: List<Smp.ZoneIn>,
+                          onProgress: (Float) -> Unit = {}) {
+        val (hdr, data) = Smp.buildSlot(name, zones)
+        var rc = Parse.smpRc(request(Requests.smpBegin(slot), timeout = 1000, retries = 0))
+        if (rc != 0) throw Smp.SlotError("begin failed (rc $rc)")
+        var off = 0
+        while (off < data.size) {
+            val a = Smp.DATA_OFF + off
+            val n = minOf(256, data.size - off)
+            rc = Parse.smpWrite(request(Requests.smpWrite(slot, a, data, off, n),
+                timeout = 1000, retries = 1))
+            if (rc != 0) throw Smp.SlotError("write at 0x${a.toString(16)} failed (rc $rc)")
+            onProgress(minOf(1f, (off + n).toFloat() / data.size))
+            off += n
+        }
+        if (data.isEmpty()) onProgress(1f)
+        rc = Parse.smpRc(request(Requests.smpEnd(slot, hdr), timeout = 2000, retries = 0))
+        if (rc != 0) throw Smp.SlotError("store failed (rc $rc: " + when (rc) {
+            1 -> "size"; 2 -> "header"; 3 -> "data CRC"; 4 -> "flash"; 5 -> "zones"
+            else -> "?"
+        } + ")")
+        smpRefresh()
+    }
+
+    /** Track [track] plays the SAMPLE engine with SET = USR{slot+1} (the web editor's smpUseOn). */
+    suspend fun smpUseOn(track: Int, slot: Int) {
+        val s = _state.value
+        val info = s.info ?: return
+        if (s.selectedTrack != track) {
+            val t = Parse.tracks(request(Requests.track(track)))
+            _state.update { it.copy(tracks = t, selectedTrack = t.sel) }
+            reloadAfterChange()
+        }
+        val e = info.engines.indexOf("SAMPLE")
+        if (e < 0) throw Smp.SlotError("no SAMPLE engine")
+        if (_state.value.dump?.engine != e) {
+            markSelfReload()
+            request(Requests.preset(e, 0))
+            reloadAfterChange()
+        }
+        val d = _state.value.pdesc.getOrNull(info.pe0) ?: throw Smp.SlotError("no SET parameter")
+        val v = d.names.indexOf("USR${slot + 1}")
+        if (v < 0) throw Smp.SlotError("USR${slot + 1} not in SAMPLE sets")
+        request(Requests.set(0, info.pe0, d.min + v))
+        _state.update { it.withParam(0, info.pe0, d.min + v) }
     }
 
     // ------------------------------------------------- step extras (proto v7/v8) ---
@@ -870,6 +974,7 @@ class DeviceController(context: Context) {
             selectedTrack = tracks?.sel ?: it.selectedTrack).withQueuedEdits() }
         loadSteps(info, dump)
         loadStepExtras(info)
+        applyFm6Names()
     }
 
     private suspend fun reloadOneStep(index: Int) {

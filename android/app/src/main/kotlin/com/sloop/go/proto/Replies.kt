@@ -82,6 +82,10 @@ data class Fm6Got(val target: Int, val index: Int, val rc: Int, val packed: IntA
 /** FM6_PUT / FM6_ERASE reply: rc 0 ok, 1 bad arguments, 2 flash error, 3 stop the song first. */
 data class Fm6Rc(val index: Int, val rc: Int)
 
+/** A user sample slot as SMP_INFO reports it: zones == 0 means empty. */
+data class SmpSlot(val zones: Int, val name: String, val kib: Int)
+data class SmpInfo(val nslots: Int, val slotKiB: Int, val slots: List<SmpSlot>)
+
 /** A parameter lock (v7): on `step` the track's `param` takes `value`. */
 data class StepLock(val step: Int, val param: Int, val value: Int)
 
@@ -264,6 +268,22 @@ object Parse {
 
     /** FM6_ERASE reply: index, rc. */
     fun fm6Erase(a: IntArray): Fm6Rc { val r = Reader(a); return Fm6Rc(r.b(), r.b()) }
+
+    /** SMP_BEGIN/END/ERASE reply: slot, rc. */
+    fun smpRc(a: IntArray): Int { val r = Reader(a); r.b(); return r.b() }
+
+    /** SMP_WRITE reply: slot, offset (3 x 7 bit), rc. */
+    fun smpWrite(a: IntArray): Int {
+        val r = Reader(a); r.b(); r.b(); r.b(); r.b(); return r.b()
+    }
+
+    /** SMP_INFO reply: slots, slot KiB, then per slot: zone count (0 = empty), name, data KiB. */
+    fun smpInfo(a: IntArray): SmpInfo {
+        val r = Reader(a)
+        val n = r.b()
+        val slotKiB = r.b()
+        return SmpInfo(n, slotKiB, List(n) { SmpSlot(r.b(), r.s(), r.b()) })
+    }
 
     /** LOCK_SET reply: track, step, param, rc, has, v14. */
     fun lockSet(a: IntArray): LockSet {

@@ -7,6 +7,7 @@ import com.sloop.go.proto.Desc
 import com.sloop.go.proto.DrumStep
 import com.sloop.go.proto.Dump
 import com.sloop.go.proto.Fm6List
+import com.sloop.go.proto.SmpInfo
 import com.sloop.go.proto.Info
 import com.sloop.go.proto.Step
 import com.sloop.go.proto.StepLock
@@ -30,6 +31,7 @@ data class DeviceState(
     val fill: List<Int> = emptyList(),         // per-step condition 0 always / 1 fill / 2 no fill (v8)
     val locks: List<StepLock> = emptyList(),   // parameter locks of the selected track (v7)
     val fm6: Fm6List? = null,                  // FM6 patch slots (proto v9, SLOOP 2.4)
+    val smp: SmpInfo? = null,                  // USR1..4 user sample slots
     val tracks: Tracks? = null,
     val selectedTrack: Int = 0,
     val presetNames: Map<Int, List<String>> = emptyMap(),

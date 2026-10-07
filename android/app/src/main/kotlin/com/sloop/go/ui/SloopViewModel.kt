@@ -20,6 +20,7 @@ class SloopViewModel(app: Application) : AndroidViewModel(app) {
     val controller = DeviceController(app)
     val state = controller.state
     val fm6 = Fm6Editor()
+    val samples = SamplesEditor()
 
     /** Work that must outlive the page that started it (a bank upload, a flash write). */
     private val jobs = CoroutineScope(SupervisorJob() + Dispatchers.Main)

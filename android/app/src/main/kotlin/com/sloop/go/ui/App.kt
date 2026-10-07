@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
@@ -75,6 +76,7 @@ private enum class Tab(val title: String, val icon: ImageVector) {
     PARAMS("Sound", Icons.Filled.Tune),
     SEQ("Sequencer", Icons.Filled.GridView),
     FM6("FM6 patches", Icons.Filled.GraphicEq),
+    SAMPLES("Samples", Icons.Filled.LibraryMusic),
     MIX("Mixer", Icons.Filled.Equalizer),
     SETTINGS("Device", Icons.Filled.Settings),
 }
@@ -151,6 +153,7 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
                     }
                 })
                 Tab.FM6 -> Fm6Screen(vm, state, onDevice = { tab = Tab.SETTINGS })
+                Tab.SAMPLES -> SamplesScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.MIX -> MixerScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.SETTINGS -> ConnectScreen(vm, state)
             }

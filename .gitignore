@@ -13,3 +13,6 @@ android/local.properties
 *.jks
 *.keystore
 keystore.properties
+
+# Local reference copy of the upstream firmware (not part of the app)
+original_os/

@@ -201,14 +201,20 @@ fun PresetPicker(vm: SloopViewModel, state: DeviceState, onDismiss: () -> Unit) 
     val info = state.info ?: return
     val dump = state.dump ?: return
     val drum = state.isDrum
+    val fm6 = !drum && dump.engine == state.fm6Engine    // FM6 has no presets: PTCH picks F1..F8 / B1..B27
     val engIndex = state.gdesc.indexOfFirst { it?.label == "ENG" }
     val engines = if (drum) emptyList() else state.gdesc.getOrNull(engIndex)?.names.orEmpty()
-    val names = if (drum) state.pdesc.getOrNull(info.pe0)?.names.orEmpty()
-        else state.presetNames[dump.engine].orEmpty()
-    val current = if (drum) state.paramValue(info.pe0) else dump.preset
+    val names = when {
+        drum -> state.pdesc.getOrNull(info.pe0)?.names.orEmpty()
+        fm6 -> state.pdesc.getOrNull(info.pe0 + 7)?.names.orEmpty()
+        else -> state.presetNames[dump.engine].orEmpty()
+    }
+    val current = if (drum) state.paramValue(info.pe0)
+        else if (fm6) state.paramValue(info.pe0 + 7) else dump.preset
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Track ${state.selectedTrack + 1} · " + if (drum) "Kit" else "Preset") },
+        title = { Text("Track ${state.selectedTrack + 1} · " +
+            if (drum) "Kit" else if (fm6) "Patch" else "Preset") },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
         text = {
             Column {
@@ -222,8 +228,10 @@ fun PresetPicker(vm: SloopViewModel, state: DeviceState, onDismiss: () -> Unit) 
                 Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
                     if (names.isEmpty()) Text("Loading…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     names.forEachIndexed { i, name ->
-                        Text("${i + 1}  $name", Modifier.fillMaxWidth().clickable {
+                        Text(if (fm6) name else "${i + 1}  $name",
+                            Modifier.fillMaxWidth().clickable {
                             if (drum) vm.controller.setParam(0, info.pe0, i)
+                            else if (fm6) vm.launch { vm.controller.fm6Assign(state.selectedTrack, i) }
                             else vm.controller.selectPreset(dump.engine, i)
                             onDismiss()
                         }.padding(horizontal = 8.dp, vertical = 11.dp),
