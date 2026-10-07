@@ -23,7 +23,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.sloop.go.device.DeviceState
@@ -73,7 +72,7 @@ fun MixerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                             )
                             if (selected) {
                                 Text("EDITING", style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary, fontFamily = FontFamily.Monospace)
+                                    color = MaterialTheme.colorScheme.primary, fontFamily = SloopFontFamily)
                             } else {
                                 Button(
                                     onClick = { vm.controller.selectTrack(i) },
@@ -89,7 +88,7 @@ fun MixerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                             valueRange = 0f..127f,
                             modifier = Modifier.weight(1f),
                         )
-                        Text("${tr.level}", Modifier.padding(start = 12.dp), fontFamily = FontFamily.Monospace,
+                        Text("${tr.level}", Modifier.padding(start = 12.dp), fontFamily = SloopFontFamily,
                             color = MaterialTheme.colorScheme.primary)
                     }
                 }

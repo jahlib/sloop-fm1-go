@@ -34,6 +34,12 @@ via Dexed and Felucca. Apache-2.0 is compatible with GPL-3.0.
 
 Android Jetpack (Compose, Activity, Lifecycle) and Kotlin / kotlinx.coroutines, under the Apache License 2.0.
 
+## Font
+
+The UI is set in **JetBrains Mono** (<https://www.jetbrains.com/lp/mono/>), licensed under the SIL Open Font
+License 1.1 — a copy ships in [fonts/OFL.txt](fonts/OFL.txt). The variable-weight build
+(`android/app/src/main/res/font/jetbrains_mono.ttf`, source in [fonts/](fonts/)) is bundled into the app.
+
 ## Disclaimer
 
 Sloop Go is an independent project. It is not made by, affiliated with, or endorsed by the authors above or by

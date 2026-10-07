@@ -61,7 +61,6 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -180,7 +179,7 @@ fun ScreenHeader(title: String, state: DeviceState) {
                     state.deviceName else state.status) +
                     if (state.queuedEdits > 0) " · queued ${state.queuedEdits}" else "",
                 style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace,
+                fontFamily = SloopFontFamily,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

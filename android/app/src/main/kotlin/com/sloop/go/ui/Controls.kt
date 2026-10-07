@@ -42,7 +42,6 @@ import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -68,7 +67,7 @@ fun ParamControl(desc: Desc?, value: Int, onChange: (Int) -> Unit) {
             else -> Knob(desc, value, onChange)
         }
         Text(formatValue(desc, value), style = MaterialTheme.typography.labelSmall,
-            fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary,
+            fontFamily = SloopFontFamily, color = MaterialTheme.colorScheme.primary,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -155,7 +154,7 @@ fun TextParamControl(desc: Desc, value: Int, onChange: (Int) -> Unit) {
             },
             contentAlignment = Alignment.Center) {
             Text("$value", style = MaterialTheme.typography.titleLarge,
-                fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
+                fontFamily = SloopFontFamily, color = MaterialTheme.colorScheme.primary)
         }
         Text("${desc.min}–${desc.max}", style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)

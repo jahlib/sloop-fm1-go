@@ -57,7 +57,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -255,7 +254,7 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                                 text = {
                                     Text((if (i == trackSlot) "▶ " else "") + slotLabel(i),
                                         fontWeight = if (i == slot) FontWeight.Bold else FontWeight.Normal,
-                                        fontFamily = FontFamily.Monospace)
+                                        fontFamily = SloopFontFamily)
                                 },
                                 onClick = { ed.slot = i; open = false })
                         }
@@ -415,7 +414,7 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                             fontWeight = FontWeight.SemiBold, color = if (n in carriers) cs.primary else cs.onSurface,
                             modifier = Modifier.weight(1f))
                         Text(Fm6.freqText(v, n), style = MaterialTheme.typography.labelMedium,
-                            fontFamily = FontFamily.Monospace, color = cs.onSurfaceVariant)
+                            fontFamily = SloopFontFamily, color = cs.onSurfaceVariant)
                     }
                     EgPreview(IntArray(4) { v[f("R${it + 1}")] }, IntArray(4) { v[f("L${it + 1}")] },
                         Modifier.fillMaxWidth().height(44.dp))
@@ -503,7 +502,7 @@ private fun NumCell(label: String, value: Int, max: Int, modifier: Modifier, onC
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-        Text("$value", style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace,
+        Text("$value", style = MaterialTheme.typography.titleMedium, fontFamily = SloopFontFamily,
             color = MaterialTheme.colorScheme.primary)
     }
     if (editing) AlertDialog(
@@ -534,7 +533,7 @@ private fun EnumCell(label: String, names: List<String>, value: Int, modifier: M
         ) {
             Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             Text(names.getOrElse(value) { "$value" }, style = MaterialTheme.typography.titleMedium,
-                fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.secondary, maxLines = 1)
+                fontFamily = SloopFontFamily, color = MaterialTheme.colorScheme.secondary, maxLines = 1)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             names.forEachIndexed { i, n ->

@@ -5,10 +5,39 @@ package com.sloop.go.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import com.sloop.go.R
+
+// JetBrains Mono (variable weight), bundled under the SIL OFL 1.1 — see fonts/OFL.txt.
+// One variable file serves every weight on API 28+ (wght axis); older releases synthesize bold.
+val SloopFontFamily = FontFamily(Font(R.font.jetbrains_mono, FontWeight.Normal))
+
+private val baseTypography = Typography()
+
+private val SloopTypography = Typography(
+    displayLarge = baseTypography.displayLarge.copy(fontFamily = SloopFontFamily),
+    displayMedium = baseTypography.displayMedium.copy(fontFamily = SloopFontFamily),
+    displaySmall = baseTypography.displaySmall.copy(fontFamily = SloopFontFamily),
+    headlineLarge = baseTypography.headlineLarge.copy(fontFamily = SloopFontFamily),
+    headlineMedium = baseTypography.headlineMedium.copy(fontFamily = SloopFontFamily),
+    headlineSmall = baseTypography.headlineSmall.copy(fontFamily = SloopFontFamily),
+    titleLarge = baseTypography.titleLarge.copy(fontFamily = SloopFontFamily),
+    titleMedium = baseTypography.titleMedium.copy(fontFamily = SloopFontFamily),
+    titleSmall = baseTypography.titleSmall.copy(fontFamily = SloopFontFamily),
+    bodyLarge = baseTypography.bodyLarge.copy(fontFamily = SloopFontFamily),
+    bodyMedium = baseTypography.bodyMedium.copy(fontFamily = SloopFontFamily),
+    bodySmall = baseTypography.bodySmall.copy(fontFamily = SloopFontFamily),
+    labelLarge = baseTypography.labelLarge.copy(fontFamily = SloopFontFamily),
+    labelMedium = baseTypography.labelMedium.copy(fontFamily = SloopFontFamily),
+    labelSmall = baseTypography.labelSmall.copy(fontFamily = SloopFontFamily),
+)
 
 // SLOOP palette (from assets/logo/sloop-icon.svg).
 val SloopBlue = Color(0xFF287CFF)
@@ -45,5 +74,5 @@ private val Light = lightColorScheme(
 @Composable
 fun SloopTheme(content: @Composable () -> Unit) {
     val colors = if (isSystemInDarkTheme()) Dark else Light
-    MaterialTheme(colorScheme = colors, content = content)
+    MaterialTheme(colorScheme = colors, typography = SloopTypography, content = content)
 }

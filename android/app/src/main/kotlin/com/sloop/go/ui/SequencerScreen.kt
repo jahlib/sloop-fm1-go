@@ -58,14 +58,16 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.res.ResourcesCompat
+import com.sloop.go.R
 import com.sloop.go.device.DeviceState
 import com.sloop.go.device.Link
 import com.sloop.go.device.decodeNotes
@@ -430,8 +432,13 @@ private class Painter(val paint: Paint) {
 }
 
 @Composable
-private fun rememberPainter() = remember {
-    Painter(Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE })
+private fun rememberPainter(): Painter {
+    val context = LocalContext.current
+    return remember {
+        Painter(Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = ResourcesCompat.getFont(context, R.font.jetbrains_mono) ?: Typeface.MONOSPACE
+        })
+    }
 }
 
 // ---------------------------------------------------------------- drum grid ---
@@ -882,7 +889,7 @@ private fun Piano(selectedNote: Int, onNote: (Int) -> Unit) {
                             .clickable { onNote(note) },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(noteName(note), fontSize = 8.sp, fontFamily = FontFamily.Monospace,
+                        Text(noteName(note), fontSize = 8.sp, fontFamily = SloopFontFamily,
                             color = if (sel) Color.Black else if (black) Color.White else Color.Black)
                     }
                 }
