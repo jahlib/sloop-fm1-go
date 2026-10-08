@@ -70,7 +70,13 @@ import androidx.core.content.res.ResourcesCompat
 import com.sloop.go.R
 import com.sloop.go.device.DeviceState
 import com.sloop.go.device.Link
+import com.sloop.go.device.PNote
 import com.sloop.go.device.decodeNotes
+import com.sloop.go.device.noteKey
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import com.sloop.go.device.SequencerMode
 import com.sloop.go.proto.DrumStep
 import com.sloop.go.proto.Step
@@ -107,12 +113,17 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     var picker by remember { mutableStateOf(false) }
     var sel by remember(state.selectedTrack) { mutableIntStateOf(0) }
     val selected = sel.coerceIn(0, state.patternLength - 1)
+    var selectMode by remember(state.selectedTrack) { mutableStateOf(false) }
+    var noteSel by remember(state.selectedTrack, selectMode) { mutableStateOf<Set<Int>>(emptySet()) }
 
     Column(Modifier.fillMaxSize()) {
         ControlPanel(vm, state, nav, onPick = { picker = true }, onClear = { askClear = true }, onFit = { fitTick++ },
-            onOptions = if (state.drumGrid) null else { { options = true } }, optionsLabel = "Step ${selected + 1}")
+            onOptions = if (state.drumGrid) null else { { options = true } }, optionsLabel = "Step ${selected + 1}",
+            selectMode = selectMode, onSelectMode = { selectMode = it }, selCount = noteSel.size,
+            onDeleteSel = { vm.controller.deleteNotes(noteSel); noteSel = emptySet() })
         if (state.drumGrid) DrumGrid(vm, state, fitTick, Modifier.weight(1f).fillMaxWidth())
-        else PianoRoll(vm, state, fitTick, selected, { sel = it }, Modifier.weight(1f).fillMaxWidth())
+        else PianoRoll(vm, state, fitTick, selected, { sel = it }, selectMode, noteSel, { noteSel = it },
+            Modifier.weight(1f).fillMaxWidth())
     }
 
     if (picker) PresetPicker(vm, state) { picker = false }
@@ -140,6 +151,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
 private fun ControlPanel(
     vm: SloopViewModel, state: DeviceState, nav: @Composable () -> Unit, onPick: () -> Unit,
     onClear: () -> Unit, onFit: () -> Unit, onOptions: (() -> Unit)?, optionsLabel: String,
+    selectMode: Boolean, onSelectMode: (Boolean) -> Unit, selCount: Int, onDeleteSel: () -> Unit,
 ) {
     var confirmSwitch by remember { mutableStateOf(false) }
     val tight = PaddingValues(horizontal = 10.dp)
@@ -164,6 +176,18 @@ private fun ControlPanel(
                 modifier = Modifier.height(30.dp), contentPadding = tight) { Text("SEND") }
             TextButton(onClick = onClear, modifier = Modifier.height(32.dp), contentPadding = tight) { Text("Clear") }
             TextButton(onClick = onFit, modifier = Modifier.height(32.dp), contentPadding = tight) { Text("Fit") }
+            if (state.drumGrid) DrumPresetMenu { p ->
+                vm.controller.applyDrumPattern(p.masks(state.patternLength))
+            } else {
+                TextButton(onClick = { vm.controller.transposeNotes(-12) },
+                    modifier = Modifier.height(32.dp), contentPadding = tight) { Text("-12") }
+                TextButton(onClick = { vm.controller.transposeNotes(12) },
+                    modifier = Modifier.height(32.dp), contentPadding = tight) { Text("+12") }
+                FilterChip(selected = selectMode, onClick = { onSelectMode(!selectMode) },
+                    label = { Text("Select") })
+                if (selectMode && selCount > 0) TextButton(onClick = onDeleteSel,
+                    modifier = Modifier.height(32.dp), contentPadding = tight) { Text("Delete $selCount") }
+            }
             if (onOptions != null) TextButton(onClick = onOptions, modifier = Modifier.height(32.dp),
                 contentPadding = tight) { Text(optionsLabel) }
             val parts = buildList {
@@ -306,6 +330,8 @@ private class Viewport {
     var hdr = 0f
     var cols = 1
     var rows = 1
+    /** Select mode: one finger draws a frame / drags notes, so two fingers scroll too and edges scroll vertically. */
+    var selectMode = false
 
     val w get() = size.width.toFloat()
     val h get() = size.height.toFloat()
@@ -336,6 +362,9 @@ private class Viewport {
         val edge = 36f * d
         val step = 10f * d
         if (p.x > w - edge) scrollBy(step, 0f) else if (p.x < lw + edge) scrollBy(-step, 0f)
+        if (selectMode) {
+            if (p.y > h - edge) scrollBy(0f, step) else if (p.y < hdr + edge) scrollBy(0f, -step)
+        }
     }
 
     fun stepAt(x: Float) = floor((x - lw + sx) / cw).toInt()
@@ -401,9 +430,14 @@ private suspend fun PointerInputScope.gridGestures(vp: Viewport, handler: () -> 
                     val dy = kotlin.math.abs(spanY - spanY0)
                     if (max(dx, dy) > 16f * vp.d) zoomAxis = if (dx > dy) 1 else 2
                 }
+                val centre = event.calculateCentroid(useCurrent = true)
+                if (vp.selectMode) {
+                    val before = event.calculateCentroid(useCurrent = false)
+                    vp.scrollBy(before.x - centre.x, before.y - centre.y)
+                }
                 vp.zoom(if (zoomAxis == 2) 1f else zx,
                     if (zoomAxis == 1) 1f else 1f + (zy - 1f) * 0.45f,
-                    event.calculateCentroid(useCurrent = true))
+                    centre)
                 event.changes.forEach { it.consume() }
             } else if (pressed.size == 1) {
                 val c = pressed[0]
@@ -557,21 +591,46 @@ private class NoteDrag(
 
 private class NoteHit(val start: Int, val note: Int, val len: Int, val edge: Int)
 
+/** The selected notes being carried (or, with [copy], a clone of them), as grid cells from the grab point. */
+private class GroupDrag(val grabStep: Int, val grabRow: Int, val copy: Boolean, val dStep: Int = 0, val dPitch: Int = 0)
+
+/** The select frame, in grid units (steps across, rows down) so it stays put while the grid scrolls. */
+private class Marquee(val x0: Float, val y0: Float, val x1: Float, val y1: Float) {
+    fun hits(n: PNote): Boolean {
+        val r = TOP_NOTE - n.pitch
+        return n.start < max(x0, x1) && n.end + 1 > min(x0, x1) && r < max(y0, y1) && r + 1 > min(y0, y1)
+    }
+}
+
+/** The group's shift kept inside the pattern and the note range (what the controller applies too). */
+private fun clampShift(sel: List<PNote>, length: Int, dStep: Int, dPitch: Int): Pair<Int, Int> =
+    if (sel.isEmpty()) 0 to 0 else
+        dStep.coerceIn(-sel.minOf { it.start }, length - 1 - sel.maxOf { it.end }) to
+            dPitch.coerceIn(-sel.minOf { it.pitch }, TOP_NOTE - sel.maxOf { it.pitch })
+
 @Composable
 private fun PianoRoll(
     vm: SloopViewModel, state: DeviceState, fitTick: Int, selected: Int,
-    onSelect: (Int) -> Unit, modifier: Modifier,
+    onSelect: (Int) -> Unit, selectMode: Boolean, noteSel: Set<Int>, onNoteSel: (Set<Int>) -> Unit,
+    modifier: Modifier,
 ) {
     val length = state.patternLength
     val steps = state.steps
     val rows = TOP_NOTE + 1
     val d = LocalDensity.current.density
     val vp = remember(state.selectedTrack) { Viewport() }
-    vp.d = d; vp.lw = 44f * d; vp.hdr = 26f * d; vp.cols = length; vp.rows = rows
+    vp.d = d; vp.lw = 44f * d; vp.hdr = 26f * d; vp.cols = length; vp.rows = rows; vp.selectMode = selectMode
     val painter = rememberPainter()
     val cs = MaterialTheme.colorScheme
     var ndrag by remember(state.selectedTrack) { mutableStateOf<NoteDrag?>(null) }
     var lastLen by remember(state.selectedTrack) { mutableIntStateOf(1) }
+    var gdrag by remember(state.selectedTrack, selectMode) { mutableStateOf<GroupDrag?>(null) }
+    var marquee by remember(state.selectedTrack, selectMode) { mutableStateOf<Marquee?>(null) }
+    val onSelNow by rememberUpdatedState(onNoteSel)
+    val live = remember { object { var v: Set<Int> = noteSel } }   // the selection as the gesture sees it, ahead of recomposition
+    live.v = noteSel
+    fun setSel(s: Set<Int>) { live.v = s; onSelNow(s) }
+    val haptic = LocalHapticFeedback.current
 
     LaunchedEffect(state.selectedTrack, length, vp.size.width > 0, fitTick) {
         if (vp.size.width == 0) return@LaunchedEffect
@@ -601,9 +660,10 @@ private fun PianoRoll(
         vp.clamp()
     }
 
-    val handler = remember(state.selectedTrack, length) {
+    val handler = remember(state.selectedTrack, length, selectMode) {
         object : GridHandler {
             fun noteAtRow(y: Float) = TOP_NOTE - vp.rowAt(y)
+            fun allNotes() = decodeNotes(vm.controller.state.value.steps, length)
             fun hit(p: Offset): NoteHit? {
                 if (p.x < vp.lw || p.y < vp.hdr) return null
                 val note = noteAtRow(p.y)
@@ -630,6 +690,16 @@ private fun PianoRoll(
                     if (p.y < vp.hdr && p.x >= vp.lw) vp.stepAt(p.x).takeIf { it in 0 until length }?.let(onSelect)
                     return
                 }
+                if (selectMode) {                       // tap a note: toggle it in the selection; empty: deselect all
+                    val h = hit(p)
+                    if (h == null) { if (live.v.isNotEmpty()) setSel(emptySet()) }
+                    else {
+                        val k = noteKey(h.note, h.start)
+                        setSel(if (k in live.v) live.v - k else live.v + k)
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    }
+                    return
+                }
                 val note = noteAtRow(p.y)
                 val step = vp.stepAt(p.x)
                 if (note !in 0..TOP_NOTE || step !in 0 until length) return
@@ -639,7 +709,17 @@ private fun PianoRoll(
                 if (h != null) lastLen = h.len
                 vm.controller.toggleNote(at, note, lastLen)
             }
+            override fun longPress(p: Offset): Boolean {
+                if (!selectMode) return false
+                val h = hit(p) ?: return false          // hold a note: take a copy of the selection and carry it
+                val k = noteKey(h.note, h.start)
+                if (k !in live.v) setSel(setOf(k))
+                gdrag = GroupDrag(vp.stepAt(p.x), vp.rowAt(p.y), true)
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                return true
+            }
             override fun grab(p: Offset): Boolean {
+                if (selectMode) return false            // no resize handles while selecting
                 val h = hit(p)?.takeIf { it.edge != 0 } ?: return false
                 onSelect(h.start)
                 ndrag = NoteDrag(false, h.start, h.note, h.len, h.start, h.start, h.note,
@@ -647,6 +727,20 @@ private fun PianoRoll(
                 return true
             }
             override fun beginMove(p: Offset): Boolean {
+                if (selectMode) {
+                    if (p.x < vp.lw || p.y < vp.hdr) return false
+                    val h = hit(p)
+                    if (h != null) {                    // drag a note: carry the selection (a loose note becomes it)
+                        val k = noteKey(h.note, h.start)
+                        if (k !in live.v) setSel(setOf(k))
+                        gdrag = GroupDrag(vp.stepAt(p.x), vp.rowAt(p.y), false)
+                    } else {                            // drag on empty grid: select frame
+                        val fx = (p.x - vp.lw + vp.sx) / vp.cw
+                        val fy = (p.y - vp.hdr + vp.sy) / vp.rh
+                        marquee = Marquee(fx, fy, fx, fy)
+                    }
+                    return true
+                }
                 val h = hit(p)?.takeIf { it.edge == 0 } ?: return false
                 val g = vp.stepAt(p.x)
                 onSelect(h.start)
@@ -655,6 +749,13 @@ private fun PianoRoll(
                 return true
             }
             override fun drag(p: Offset) {
+                if (selectMode) {
+                    gdrag?.let { g -> gdrag = GroupDrag(g.grabStep, g.grabRow, g.copy,
+                        vp.stepAt(p.x) - g.grabStep, -(vp.rowAt(p.y) - g.grabRow)) }
+                    marquee?.let { m -> marquee = Marquee(m.x0, m.y0,
+                        (p.x - vp.lw + vp.sx) / vp.cw, (p.y - vp.hdr + vp.sy) / vp.rh) }
+                    return
+                }
                 val dr = ndrag ?: return
                 ndrag = if (dr.move) dr.copy(
                     toStep = (dr.start + vp.stepAt(p.x) - dr.grabStep).coerceIn(0, length - dr.len),
@@ -663,6 +764,20 @@ private fun PianoRoll(
                 else dr.copy(toStep = vp.stepAt(p.x).coerceIn(0, dr.start + dr.len - 1))
             }
             override fun release(p: Offset) {
+                if (selectMode) {
+                    drag(p)
+                    gdrag?.let { g ->
+                        val sel = allNotes().filter { noteKey(it.pitch, it.start) in live.v }
+                        val (ds, dp) = clampShift(sel, length, g.dStep, g.dPitch)
+                        if (g.copy || ds != 0 || dp != 0) {
+                            vm.controller.placeNotes(live.v, g.dStep, g.dPitch, g.copy)
+                            if (ds != 0 || dp != 0) setSel(sel.map { noteKey(it.pitch + dp, it.start + ds) }.toSet())
+                        }
+                    }
+                    marquee?.let { m -> setSel(allNotes().filter { m.hits(it) }.map { noteKey(it.pitch, it.start) }.toSet()) }
+                    gdrag = null; marquee = null
+                    return
+                }
                 val dr = ndrag ?: return
                 drag(p)
                 val fin = ndrag ?: dr
@@ -679,7 +794,7 @@ private fun PianoRoll(
                 } else if (fin.toStep != fin.start)
                     vm.controller.adjustNoteStart(fin.start, fin.note, fin.toStep - fin.start)
             }
-            override fun cancel() { ndrag = null }
+            override fun cancel() { ndrag = null; gdrag = null; marquee = null }
         }
     }
 
@@ -710,18 +825,46 @@ private fun PianoRoll(
                 drawLine(if (c % 4 == 0) strongLine else line, Offset(colX(c), hdr), Offset(colX(c), size.height),
                     if (c % 4 == 0) 1.5f * d else 1f * d)
             }
-            for (n in decodeNotes(steps, length)) {
+            val all = decodeNotes(steps, length)
+            val picked = if (selectMode) all.filter { noteKey(it.pitch, it.start) in noteSel } else emptyList()
+            val lifted = gdrag?.takeIf { !it.copy }
+            for (n in all) {
                 val r = TOP_NOTE - n.pitch
                 if (r !in r0..r1 || n.end < c0 || n.start > c1) continue
                 val x = colX(n.start)
-                drawRoundRect(cs.primary, Offset(x + 1.5f * d, rowY(r) + 2f * d),
-                    Size(n.len * cw - 3f * d, rh - 4f * d), radius)
-                drawRoundRect(cs.onPrimary.copy(alpha = 0.7f),
-                    Offset(x + n.len * cw - 8f * d, rowY(r) + rh * 0.28f),
-                    Size(3f * d, rh * 0.44f), CornerRadius(1.5f * d))
-                if (n.len > 1) drawRoundRect(cs.onPrimary.copy(alpha = 0.7f),
-                    Offset(x + 5f * d, rowY(r) + rh * 0.28f),
-                    Size(3f * d, rh * 0.44f), CornerRadius(1.5f * d))
+                val isSel = selectMode && (n in picked || marquee?.hits(n) == true)
+                val body = if (isSel) cs.tertiary else cs.primary
+                drawRoundRect(if (lifted != null && n in picked) body.copy(alpha = 0.3f) else body,
+                    Offset(x + 1.5f * d, rowY(r) + 2f * d), Size(n.len * cw - 3f * d, rh - 4f * d), radius)
+                if (isSel) drawRoundRect(cs.onTertiary.copy(alpha = 0.9f),
+                    Offset(x + 1.5f * d, rowY(r) + 2f * d), Size(n.len * cw - 3f * d, rh - 4f * d), radius,
+                    style = Stroke(1.5f * d))
+                if (!selectMode) {                       // resize handles; select mode has none
+                    drawRoundRect(cs.onPrimary.copy(alpha = 0.7f),
+                        Offset(x + n.len * cw - 8f * d, rowY(r) + rh * 0.28f),
+                        Size(3f * d, rh * 0.44f), CornerRadius(1.5f * d))
+                    if (n.len > 1) drawRoundRect(cs.onPrimary.copy(alpha = 0.7f),
+                        Offset(x + 5f * d, rowY(r) + rh * 0.28f),
+                        Size(3f * d, rh * 0.44f), CornerRadius(1.5f * d))
+                }
+            }
+            gdrag?.let { g ->                            // the carried group (or its clone) where it would land
+                val (ds, dp) = clampShift(picked, length, g.dStep, g.dPitch)
+                for (n in picked) {
+                    val gr = TOP_NOTE - (n.pitch + dp)
+                    drawRoundRect(cs.tertiary.copy(alpha = 0.75f),
+                        Offset(colX(n.start + ds) + 1.5f * d, rowY(gr) + 2f * d),
+                        Size(n.len * cw - 3f * d, rh - 4f * d), radius)
+                    drawRoundRect(cs.onTertiary, Offset(colX(n.start + ds) + 1.5f * d, rowY(gr) + 2f * d),
+                        Size(n.len * cw - 3f * d, rh - 4f * d), radius, style = Stroke(1.5f * d))
+                }
+            }
+            marquee?.let { m ->
+                val left = lw + min(m.x0, m.x1) * cw - sx
+                val top = hdr + min(m.y0, m.y1) * rh - sy
+                val sz = Size(kotlin.math.abs(m.x1 - m.x0) * cw, kotlin.math.abs(m.y1 - m.y0) * rh)
+                drawRect(cs.tertiary.copy(alpha = 0.15f), Offset(left, top), sz)
+                drawRect(cs.tertiary, Offset(left, top), sz, style = Stroke(1.5f * d))
             }
             ndrag?.let { dr ->
                 val (s, n, l) = if (dr.move) Triple(dr.toStep, dr.toNote, dr.len)

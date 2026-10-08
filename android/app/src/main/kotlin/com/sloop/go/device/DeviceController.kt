@@ -586,6 +586,36 @@ class DeviceController(context: Context) {
         }
     }
 
+    /**
+     * Moves (or, with [copy], clones) the notes named by [keys] ([noteKey]) as one group by [dStep] steps and [dPitch]
+     * semitones; the group is clamped to stay inside the pattern and 0..127. Notes already lying where the group
+     * lands win: the dragged notes are cut away where they overlap. One batch through the normal edit queue.
+     */
+    fun placeNotes(keys: Set<Int>, dStep: Int, dPitch: Int, copy: Boolean) {
+        editNotes { s, notes ->
+            val sel = notes.filter { noteKey(it.pitch, it.start) in keys }
+            if (sel.isEmpty()) return@editNotes null
+            val ds = dStep.coerceIn(-sel.minOf { it.start }, s.patternLength - 1 - sel.maxOf { it.end })
+            val dp = dPitch.coerceIn(-sel.minOf { it.pitch }, 127 - sel.maxOf { it.pitch })
+            if (!copy && ds == 0 && dp == 0) return@editNotes null
+            val base = if (copy) notes else notes - sel.toSet()
+            val mono = voiceMode(s) != V_POLY
+            base + sel.flatMap { it.copy(start = it.start + ds, pitch = it.pitch + dp).freeParts(base, mono) }
+        }
+    }
+
+    /** Removes the notes named by [keys] ([noteKey]). */
+    fun deleteNotes(keys: Set<Int>) {
+        editNotes { _, notes -> notes.filter { noteKey(it.pitch, it.start) !in keys }.takeIf { it.size != notes.size } }
+    }
+
+    /** Shifts every note of the pattern by [delta] semitones (+-12 = an octave), clamped to 0..127. */
+    fun transposeNotes(delta: Int) {
+        editNotes { _, notes ->
+            notes.map { it.copy(pitch = (it.pitch + delta).coerceIn(0, 127)) }
+        }
+    }
+
     /** Moves the note that starts at [fromIndex] with pitch [fromNote]; its length is kept. */
     fun moveNote(fromIndex: Int, fromNote: Int, toIndex: Int, toNote: Int) {
         if (toIndex !in 0 until _state.value.patternLength || toNote !in 0..127) return
@@ -694,6 +724,25 @@ class DeviceController(context: Context) {
                 if (step.n != 0 || step.time != 2) setStep(i,
                     Step(i, 0, intArrayOf(0, 0, 0, 0), 2, 0, 0))
             }
+        }
+    }
+
+    /**
+     * Fills the drum grid with a ready pattern: [masks] holds the lane bits of each step of the pattern. Only the
+     * steps that differ go out, one edit each, through the same queue (or Store draft) as hand edits; the level and
+     * ratchet of a lane whose hit did not change are kept.
+     */
+    fun applyDrumPattern(masks: List<Int>) {
+        val s = _state.value
+        if (s.link != Link.READY || !s.drumGrid) return
+        for (i in 0 until minOf(s.patternLength, masks.size)) {
+            val cur = s.drumSteps.getOrNull(i) ?: DrumStep(i, 0, IntArray(16), IntArray(16))
+            val diff = cur.on xor masks[i]
+            if (diff == 0) continue
+            val lvl = cur.lvl.copyOf()
+            val rat = cur.rat.copyOf()
+            for (l in 0 until 16) if ((diff shr l) and 1 == 1) { lvl[l] = 0; rat[l] = 0 }
+            setDrumStep(i, cur.copy(on = masks[i], lvl = lvl, rat = rat))
         }
     }
 

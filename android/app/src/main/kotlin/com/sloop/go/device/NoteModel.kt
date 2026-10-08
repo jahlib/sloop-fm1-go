@@ -15,6 +15,28 @@ data class PNote(val start: Int, val len: Int, val pitch: Int) {
     val end: Int get() = start + len - 1
 }
 
+/** A note's identity inside one pattern (pitch + first step), stable while the note is only moved or cut at its end. */
+fun noteKey(pitch: Int, start: Int): Int = pitch * 1024 + start
+
+/**
+ * The parts of this note that stay free of [others] (existing notes win). Same-pitch notes conflict when they
+ * overlap in time; in a monophonic voice mode every note does. A note covered in the middle comes back as two parts.
+ */
+fun PNote.freeParts(others: List<PNote>, mono: Boolean): List<PNote> {
+    var parts = listOf(this)
+    for (o in others) {
+        if (!mono && o.pitch != pitch) continue
+        if (o.end < start || o.start > end) continue
+        parts = parts.flatMap { p ->
+            if (o.end < p.start || o.start > p.end) listOf(p) else buildList {
+                if (p.start < o.start) add(p.copy(len = o.start - p.start))
+                if (p.end > o.end) add(p.copy(start = o.end + 1, len = p.end - o.end))
+            }
+        }
+    }
+    return parts
+}
+
 /** P_VOICE: 0 POLY, 1 MONO, 2 LEG, 3 UNI (firmware enum V_POLY..V_UNISON). */
 const val V_POLY = 0
 
