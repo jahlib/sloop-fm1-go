@@ -4,6 +4,19 @@ A native Android app (Kotlin + Jetpack Compose) for the **M-VAVE FM-1** running 
 It talks to the device directly over USB-MIDI through Android's `MidiManager` — no WebView, no JavaScript bridge —
 so edits reach the FM-1 immediately.
 
+<table>
+  <tr>
+    <td><img src="screenshots/1.png" alt="Sound editor" /></td>
+    <td><img src="screenshots/2.png" alt="Sequencer" /></td>
+    <td><img src="screenshots/3.png" alt="FM6 patches" /></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/4.png" alt="Samples" /></td>
+    <td><img src="screenshots/5.png" alt="Mixer" /></td>
+    <td><img src="screenshots/6.png" alt="Settings" /></td>
+  </tr>
+</table>
+
 > **Made on the basis of the work of others.** Sloop Go is a companion app for
 > [**SLOOP**](https://github.com/isod89/sloop-fm1) by **isod89**, which in turn builds on
 > [**Felucca**](https://github.com/hugelton/Felucca) by **Leo Kuroshita / Hügelton Instruments**.
