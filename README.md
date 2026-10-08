@@ -17,11 +17,11 @@ so edits reach the FM-1 immediately.
   </tr>
 </table>
 
-> **Made on the basis of the work of others.** Sloop Go is a companion app for
+> **Made on the basis of the work of others.** Sloop Go is a companion app developed for
 > [**SLOOP**](https://github.com/isod89/sloop-fm1) by **isod89**, which in turn builds on
 > [**Felucca**](https://github.com/hugelton/Felucca) by **Leo Kuroshita / Hügelton Instruments**.
-> The editor protocol, the FM6 patch format and the firmware itself are their work. This app is an independent
-> project and is not affiliated with them. See [NOTICE.md](NOTICE.md).
+> The editor protocol, the FM6 patch format and the firmware itself are their work — this app would not
+> exist without them. See [NOTICE.md](NOTICE.md).
 
 ## Features
 
