@@ -269,7 +269,7 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
                     Text(
                         if (ed.mode == SamplesEditor.Mode.FILES)
                             "One file per note: roots come from file names (\"kick_C3.wav\"), the rest of the keys split themselves. Recording goes in as a file too."
-                        else "One recording cut into pieces, one piece per key. Open a file or record, mark the chops, send. Longer than a slot is fine: keep the chops you want.",
+                        else "One recording cut into pieces, one piece per key. Open a file or record, mark the chops, send. Longer than a slot is fine: keep the chops you want. On the wave: tap drops a marker, tap on one selects it, drag its dot to move it, hold to delete.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
 
@@ -481,41 +481,43 @@ private fun ChopPane(ed: SamplesEditor) {
             (if (chops.count { !it.off } < chops.size) " (${chops.count { !it.off }} kept)" else ""),
             style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
 
-        // ---- the wave: tap = marker (snapped) / select + play, drag a marker, hold = delete ----
+        // ---- the wave: tap near a marker = select + play, tap elsewhere = add (snapped),
+        //      drag a marker's handle = move it, long-press a marker = delete ----
         var dragMark by remember { mutableIntStateOf(-1) }
         val markPaint = remember { Paint().apply { textSize = 26f; this.typeface = typeface } }
         Box(Modifier.fillMaxWidth()) {
             Canvas(Modifier.fillMaxWidth().height(140.dp)
                 .pointerInput(x) {
+                    fun nearMark(px: Float, radiusPx: Float): Int? {
+                        val per = x.size / size.width.toFloat()
+                        val pos = px * per
+                        return ed.marks.indices.minByOrNull { kotlin.math.abs(ed.marks[it].start - pos) }
+                            ?.takeIf { kotlin.math.abs(ed.marks[it].start - pos) < radiusPx * per }
+                    }
                     detectTapGestures(
                         onTap = { off ->
-                            val per = x.size / size.width.toFloat()
-                            val pos = off.x * per
-                            val mi = ed.marks.indexOfFirst {
-                                kotlin.math.abs(it.start - pos) < 8 * per }
-                            if (mi >= 0) {
+                            val mi = nearMark(off.x, 24f)
+                            if (mi != null) {
                                 ed.sel = mi
                                 chops.getOrNull(mi)?.let { Audio.play(x, it.start, it.end) }
                             } else {
                                 val n = ed.nov
                                 ed.addMark(if (n != null)
-                                    Smp.chopSnap(x, n, pos.toDouble(), 0.02) else pos.toInt())
+                                    Smp.chopSnap(x, n, (off.x * x.size / size.width).toDouble(), 0.02)
+                                    else (off.x * x.size / size.width).toInt())
                             }
                         },
-                        onLongPress = { off ->
-                            val per = x.size / size.width.toFloat()
-                            ed.marks.indexOfFirst {
-                                kotlin.math.abs(it.start - off.x * per) < 8 * per
-                            }.takeIf { it >= 0 }?.let { ed.removeMark(it) }
-                        },
+                        onLongPress = { off -> nearMark(off.x, 24f)?.let { ed.removeMark(it) } },
                     )
                 }
                 .pointerInput(x) {
                     detectDragGestures(
                         onDragStart = { o ->
                             val per = x.size / size.width.toFloat()
-                            dragMark = ed.marks.indexOfFirst {
-                                kotlin.math.abs(it.start - o.x * per) < 10 * per }
+                            val pos = o.x * per
+                            dragMark = ed.marks.indices
+                                .minByOrNull { kotlin.math.abs(ed.marks[it].start - pos) }
+                                ?.takeIf { kotlin.math.abs(ed.marks[it].start - pos) < 28 * per } ?: -1
                             if (dragMark >= 0) ed.sel = dragMark
                         },
                         onDrag = { c, _ ->
@@ -525,7 +527,10 @@ private fun ChopPane(ed: SamplesEditor) {
                                 c.consume()
                             }
                         },
-                        onDragEnd = { dragMark = -1 },
+                        onDragEnd = {
+                            dragMark = -1
+                            chops.getOrNull(ed.sel)?.let { Audio.play(x, it.start, it.end) }
+                        },
                     )
                 }) {
                 val w = size.width
@@ -554,12 +559,14 @@ private fun ChopPane(ed: SamplesEditor) {
                     px++
                 }
                 drawLine(cs.outline, Offset(0f, mid), Offset(w, mid), 1f)
-                // markers
+                // markers: a grab handle on top of each line (touch zone is +-24 px)
                 for (m in ed.marks.withIndex()) {
                     val mk = m.value
                     val mx = mk.start * w / x.size
-                    drawLine(if (m.index == ed.sel) cs.primary else cs.tertiary,
-                        Offset(mx, 0f), Offset(mx, h), 3f)
+                    val col = if (m.index == ed.sel) cs.primary else cs.tertiary
+                    drawLine(col, Offset(mx, 0f), Offset(mx, h), if (m.index == ed.sel) 5f else 3f)
+                    drawCircle(col, radius = if (m.index == ed.sel) 11f else 8f,
+                        center = Offset(mx, 16f))
                 }
                 markPaint.color = android.graphics.Color.WHITE
                 for (m in ed.marks.withIndex()) {
@@ -654,6 +661,21 @@ private fun ChopPane(ed: SamplesEditor) {
                         modifier = Modifier.weight(1f))
                     TextButton(onClick = { ed.setChopLen(c.i, 0) },
                         enabled = c.end < c.full) { Text("Full") }
+                }
+                // marker position: fine nudging (1 / 10 / 50 ms) for thumbs
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("mark", style = MaterialTheme.typography.labelSmall,
+                        color = cs.onSurfaceVariant)
+                    val step = { ms: Double -> (ms * Smp.RATE / 1000).toInt() }
+                    TextButton(onClick = { ed.moveMark(c.i, c.start - step(50.0)) }) { Text("«") }
+                    TextButton(onClick = { ed.moveMark(c.i, c.start - step(10.0)) }) { Text("‹") }
+                    TextButton(onClick = { ed.moveMark(c.i, c.start - step(1.0)) }) { Text("·") }
+                    Text("%.3f s".format(c.start.toDouble() / Smp.RATE),
+                        style = MaterialTheme.typography.labelSmall, fontFamily = SloopFontFamily,
+                        color = cs.onSurfaceVariant)
+                    TextButton(onClick = { ed.moveMark(c.i, c.start + step(1.0)) }) { Text("·") }
+                    TextButton(onClick = { ed.moveMark(c.i, c.start + step(10.0)) }) { Text("›") }
+                    TextButton(onClick = { ed.moveMark(c.i, c.start + step(50.0)) }) { Text("»") }
                 }
             }
             // meter + fit
