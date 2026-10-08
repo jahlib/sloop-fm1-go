@@ -30,6 +30,12 @@ so edits reach the FM-1 immediately.
   fill / parameter locks (SLOOP 2.4).
 - **FM6 patches** (SLOOP 2.4) — slot library, DX7 SysEx import / export from phone storage, upload to the bank or to a
   track, and a full six-operator editor.
+- **Samples** (SLOOP 2.4) — USR1–4 user sample slots. Load audio files from phone storage **or record straight from
+  the mic** (voice / camera / raw inputs selectable) and drop the take into the slot: **Files** mode maps each file to
+  its note (root from the file name, the rest of the keyboard splits itself), **Chop** mode cuts one take into pieces
+  on a touch waveform — markers snap to hits, drag to move, per-chop keep / length, auto-fit to the slot. Everything
+  is normalized, resampled to 22050 Hz and encoded to IMA ADPCM in-app, then written to the FM-1 over the editor
+  protocol with progress — ready to play via SAMPLE on a track.
 - **Mixer** and **Device** pages, Play / Stop over USB-MIDI.
 
 Requires a phone with USB host (OTG) and a USB-C cable to the FM-1. Written for SLOOP 2.4 (editor protocol v9);
