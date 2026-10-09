@@ -130,7 +130,7 @@ fun ConnectScreen(vm: SloopViewModel, state: DeviceState) {
                     Text("About", style = MaterialTheme.typography.titleMedium)
                     Text("Sloop Go is free software (GPL-3.0). It is a companion app by jahlib for the SLOOP firmware " +
                         "by isod89 (github.com/isod89/sloop-fm1) and builds on Felucca by Leo Kuroshita / " +
-                        "Hügelton Instruments (github.com/hugelton/Felucca). It is not affiliated with them." +
+                        "Hügelton Instruments (github.com/hugelton/Felucca). It is not affiliated with them. " +
                         "Have fun and make some bangers!",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
