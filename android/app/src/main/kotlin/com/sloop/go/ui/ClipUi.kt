@@ -22,6 +22,10 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -167,8 +171,11 @@ fun ClipBrowserOverlay(vm: SloopViewModel, kind: ClipKind, mode: BrowserMode, ca
         Card(Modifier.align(Alignment.Center).padding(20.dp).fillMaxWidth()
             .pointerInput(Unit) { detectTapGestures { } }) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(if (mode == BrowserMode.SAVE) "Save ${kind.title.lowercase()} pattern" else "Load ${kind.title.lowercase()} pattern",
-                    style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (mode == BrowserMode.SAVE) "Save ${kind.title.lowercase()} pattern" else "Load ${kind.title.lowercase()} pattern",
+                        Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = "Close") }
+                }
                 if (mode == BrowserMode.SAVE) {
                     OutlinedTextField(value = name, onValueChange = { name = it.take(40); error = null }, singleLine = true,
                         label = { Text("Name") }, modifier = Modifier.fillMaxWidth(),

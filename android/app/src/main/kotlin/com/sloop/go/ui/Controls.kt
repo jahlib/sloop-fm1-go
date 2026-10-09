@@ -5,6 +5,10 @@ package com.sloop.go.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -54,7 +58,7 @@ import kotlin.math.sin
 
 /** A single parameter, rendered as a slider / switch / chip row depending on its format. */
 @Composable
-fun ParamControl(desc: Desc?, value: Int, onChange: (Int) -> Unit) {
+fun ParamControl(desc: Desc?, value: Int, text: String? = null, onFinished: (() -> Unit)? = null, onChange: (Int) -> Unit) {
     if (desc == null) return
     Column(Modifier.fillMaxWidth().padding(horizontal = 3.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
@@ -64,16 +68,17 @@ fun ParamControl(desc: Desc?, value: Int, onChange: (Int) -> Unit) {
             isToggle(desc) -> Switch(checked = value != 0,
                 onCheckedChange = { onChange(if (it) desc.max else desc.min) })
             isEnum(desc) -> EnumChips(desc, value, onChange)
-            else -> Knob(desc, value, onChange)
+            else -> Knob(desc, value, onChange, onFinished)
         }
-        Text(formatValue(desc, value), style = MaterialTheme.typography.labelSmall,
+        Text(text ?: formatValue(desc, value), style = MaterialTheme.typography.labelSmall,
             fontFamily = SloopFontFamily, color = MaterialTheme.colorScheme.primary,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
-private fun Knob(desc: Desc, value: Int, onChange: (Int) -> Unit) {
+private fun Knob(desc: Desc, value: Int, onChange: (Int) -> Unit, onFinished: (() -> Unit)? = null) {
+    val finished by rememberUpdatedState(onFinished)
     val density = LocalDensity.current
     val latestValue by rememberUpdatedState(value)
     var dragged by remember(desc.scope, desc.id) { mutableFloatStateOf(value.toFloat()) }
@@ -98,6 +103,8 @@ private fun Knob(desc: Desc, value: Int, onChange: (Int) -> Unit) {
                 if (next != latestValue) onChange(next)
                 change.consume()
             },
+            onDragEnd = { finished?.invoke() },
+            onDragCancel = { finished?.invoke() },
         )
     }.pointerInput(desc.scope, desc.id, desc.def) {
         detectTapGestures(onDoubleTap = { onChange(desc.def) })
@@ -195,5 +202,39 @@ private fun EnumChips(desc: Desc, value: Int, onChange: (Int) -> Unit) {
                 })
             }
         }
+    }
+}
+
+/** A vertical fader: the whole length is touch-sensitive, a touch jumps to its height and a drag follows it. */
+@Composable
+fun VerticalSlider(value: Int, min: Int, max: Int, onChange: (Int) -> Unit, modifier: Modifier = Modifier) {
+    val density = LocalDensity.current
+    val latest by rememberUpdatedState(onChange)
+    val span = (max - min).coerceAtLeast(1)
+    val primary = MaterialTheme.colorScheme.primary
+    val track = MaterialTheme.colorScheme.outline
+    val thumb = MaterialTheme.colorScheme.onPrimary
+    val frac = ((value - min).toFloat() / span).coerceIn(0f, 1f)
+    Canvas(modifier.fillMaxWidth().pointerInput(min, max) {
+        val pad = with(density) { 16.dp.toPx() }
+        fun at(y: Float): Int =
+            (min + (1f - ((y - pad) / (size.height - 2 * pad).coerceAtLeast(1f)).coerceIn(0f, 1f)) * span).roundToInt()
+        awaitEachGesture {
+            val down = awaitFirstDown()
+            latest(at(down.position.y))
+            down.consume()
+            drag(down.id) { c -> latest(at(c.position.y)); c.consume() }
+        }
+    }) {
+        val pad = 16.dp.toPx()
+        val cx = size.width / 2f
+        val h = (size.height - 2 * pad).coerceAtLeast(1f)
+        val w = 10.dp.toPx()
+        drawRoundRect(track.copy(alpha = 0.5f), Offset(cx - w / 2, pad), Size(w, h), CornerRadius(w / 2))
+        val ty = pad + h * (1f - frac)
+        drawRoundRect(primary, Offset(cx - w / 2, ty), Size(w, pad + h - ty), CornerRadius(w / 2))
+        val tw = 44.dp.toPx(); val th = 26.dp.toPx()
+        drawRoundRect(primary, Offset(cx - tw / 2, ty - th / 2), Size(tw, th), CornerRadius(8.dp.toPx()))
+        drawLine(thumb, Offset(cx - tw / 4, ty), Offset(cx + tw / 4, ty), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
     }
 }

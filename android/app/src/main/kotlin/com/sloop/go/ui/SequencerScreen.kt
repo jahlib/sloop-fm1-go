@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FitScreen
@@ -201,8 +202,9 @@ private fun ControlPanel(
         }
     }
     // One scrolling row of function blocks: track | sound | mode | edit | key | pattern files | step | status
-    Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).horizontalScroll(rememberScrollState())
-        .padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    BoxWithConstraints(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
+    Row(Modifier.horizontalScroll(rememberScrollState()).widthIn(min = maxWidth).padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
         nav()
         TrackSelect(vm, state)
         Text(state.soundLabel.substringAfter("· ") + " ▾",
@@ -252,6 +254,7 @@ private fun ControlPanel(
             color = if (state.queueError != null) MaterialTheme.colorScheme.error
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.labelSmall, maxLines = 1)
+    }
     }
     if (confirmSwitch) AlertDialog(
         onDismissRequest = { confirmSwitch = false },

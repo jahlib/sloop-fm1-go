@@ -8,6 +8,13 @@ package com.sloop.go.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
+import com.sloop.go.proto.Desc
+import com.sloop.go.proto.Fmt
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -204,99 +211,85 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } })
     }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp, 0.dp, 8.dp, 96.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { ScreenHeader("Drum synth", state) }
+    val o = if (kit != null) ed.values() else IntArray(Dsyn.NKEYS)
 
-        if (ed.busy || ed.message != null) item {
+    class Item(val desc: Desc, val value: Int, val text: String, val onChange: (Int) -> Unit, val onFinished: (() -> Unit)?)
+
+    fun knobItem(kn: Dsyn.Knob): Item {
+        val v = o[kn.key]
+        val (txt, unit) = kn.fmt(v, o)
+        val names = kn.names
+        val toggle = names != null && kn.min == 0 && kn.max == 1
+        val discrete = names != null
+        val origin = ed.src?.let { Dsyn.decode(it.sounds[ed.lane])[kn.key] } ?: v   // double tap puts it back
+        val desc = Desc(2, kn.key, if (toggle) Fmt.ONOFF else if (discrete) Fmt.ENUM else Fmt.INT, kn.min, kn.max, origin,
+            kn.label, "", names ?: emptyList())
+        return Item(desc, v, if (unit.isEmpty()) txt else "$txt $unit", { nv -> edit(kn.key, nv, discrete) },
+            if (discrete) null else ({ schedule(true) }))
+    }
+
+    fun crushItems(): List<Item> {
+        val k = kit ?: return emptyList()
+        val bits = k.crush and 15
+        val sh = (k.crush shr 4) and 15
+        fun set(b: Int, h: Int) {
+            k.crush = (b and 15) or ((h and 15) shl 4)
+            ed.pend.add(HEAD); ed.stored = false; ed.rev++
+            schedule(false)
+        }
+        return listOf(
+            Item(Desc(2, 100, Fmt.INT, 0, 15, 0, "CRUSH", "", emptyList()), bits, if (bits != 0) "-$bits bits" else "OFF",
+                { set(it, sh) }, { schedule(true) }),
+            Item(Desc(2, 101, Fmt.INT, 0, 15, 0, "S&H", "", emptyList()), sh, if (sh != 0) "1/${sh + 1}" else "OFF",
+                { set(bits, it) }, { schedule(true) }),
+        )
+    }
+
+    LazyVerticalStaggeredGrid(
+        columns = StaggeredGridCells.Fixed(2),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(8.dp, 8.dp, 8.dp, 96.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalItemSpacing = 8.dp,
+    ) {
+        item(key = "header", span = StaggeredGridItemSpan.FullLine) { ScreenHeader("Drum synth", state) }
+
+        if (ed.busy || ed.message != null) item(key = "msg", span = StaggeredGridItemSpan.FullLine) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                 if (ed.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 ed.message?.let { Text(it, color = if (ed.isError) cs.error else cs.primary, style = MaterialTheme.typography.bodySmall) }
             }
         }
 
-        item {
+        item(key = "kit", span = StaggeredGridItemSpan.FullLine) {
             Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Kit", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
                         for (k in 0 until Dsyn.NUSER) FilterChip(selected = k == ed.k, enabled = !ed.busy,
                             onClick = { op { load(k) } }, label = { Text("SYN${k + 1}") })
-                    }
-                    if (kit != null) {
-                        OutlinedTextField(value = kit.name, singleLine = true, label = { Text("Name (8 characters)") },
-                            modifier = Modifier.fillMaxWidth(), onValueChange = {
+                        if (kit != null) OutlinedTextField(value = kit.name, singleLine = true, label = { Text("Name") },
+                            modifier = Modifier.weight(1f), onValueChange = {
                                 kit.name = it.filter { c -> c.code in 0x20..0x7E }.take(8)
                                 ed.pend.add(HEAD); ed.stored = false; ed.rev++
                                 schedule(false)
                             })
-                        val bits = kit.crush and 15
-                        val sh = (kit.crush shr 4) and 15
-                        fun crush(b: Int, s: Int) {
-                            kit.crush = (b and 15) or ((s and 15) shl 4)
-                            ed.pend.add(HEAD); ed.stored = false; ed.rev++
-                            schedule(false)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("CRUSH", Modifier.width(64.dp), style = MaterialTheme.typography.labelMedium)
-                            Slider(value = bits.toFloat(), onValueChange = { crush(it.toInt(), sh) },
-                                valueRange = 0f..15f, modifier = Modifier.weight(1f))
-                            Text(if (bits != 0) "-$bits bits" else "OFF", Modifier.width(72.dp),
-                                color = cs.primary, fontFamily = SloopFontFamily, style = MaterialTheme.typography.labelMedium)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("S&H", Modifier.width(64.dp), style = MaterialTheme.typography.labelMedium)
-                            Slider(value = sh.toFloat(), onValueChange = { crush(bits, it.toInt()) },
-                                valueRange = 0f..15f, modifier = Modifier.weight(1f))
-                            Text(if (sh != 0) "1/${sh + 1}" else "OFF", Modifier.width(72.dp),
-                                color = cs.primary, fontFamily = SloopFontFamily, style = MaterialTheme.typography.labelMedium)
-                        }
-                        val names = ed.list?.names.orEmpty()
-                        var open by remember { mutableStateOf(false) }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            androidx.compose.foundation.layout.Box(Modifier.weight(1f)) {
-                                OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
-                                    Text("From ${names.getOrNull(ed.from) ?: "?"}  ▾", maxLines = 1)
-                                }
-                                DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                                    names.forEachIndexed { i, n -> DropdownMenuItem(text = { Text(n) },
-                                        onClick = { ed.from = i; open = false }) }
-                                }
-                            }
-                            Button(enabled = !ed.busy, onClick = {
-                                val i = ed.from
-                                confirm = Triple("Copy kit?", "SYN${ed.k + 1} becomes a copy of ${names.getOrNull(i)}; your edits to it are lost.") {
-                                    op {
-                                        val rc = ctl.dsynCopy(ed.k, i)
-                                        if (rc != 0) { ed.say("Copy failed (rc $rc)", true); return@op }
-                                        ed.pend.clear()
-                                        load(ed.k)
-                                        ed.stored = false
-                                        ed.say("Copied ${names.getOrNull(i)}")
-                                    }
-                                }
-                            }) { Text("Copy") }
-                        }
                     }
+                    if (kit == null && !ed.busy) Button(onClick = { op { load(ed.k) } }) { Text("Load kits") }
                 }
             }
         }
 
-        if (kit == null && !ed.busy) item {
-            Button(onClick = { op { load(ed.k) } }, modifier = Modifier.padding(8.dp)) { Text("Load kits") }
-        }
-
         if (kit != null) {
-            item {
+            item(key = "lane", span = StaggeredGridItemSpan.FullLine) {
                 Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Sound", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
                             Dsyn.LANE_NAMES.forEachIndexed { l, n ->
                                 FilterChip(selected = l == ed.lane, onClick = {
                                     ed.lane = l; ed.rev++
                                     vm.launch { runCatching { ctl.dsynPlay(ed.k, l) } }
-                                }, label = { Text(n) })
+                                }, label = { Text(n, style = MaterialTheme.typography.labelSmall) })
                             }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -314,41 +307,27 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                 }
             }
 
-            val o = ed.values()
             for (g in Dsyn.GROUPS) item(key = "g-${g.title}") {
+                val items = g.knobs.map { knobItem(it) } + if (g.title == "Output") crushItems() else emptyList()
                 Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("${g.title} · ${Dsyn.LANE_NAMES[ed.lane]}", style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold)
-                        for (kn in g.knobs) {
-                            val v = o[kn.key]
-                            val (txt, unit) = kn.fmt(v, o)
-                            val names = kn.names
-                            if (names != null) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(kn.label, Modifier.width(64.dp), style = MaterialTheme.typography.labelMedium)
-                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        names.forEachIndexed { i, n ->
-                                            FilterChip(selected = v == kn.min + i, onClick = { edit(kn.key, kn.min + i, true) },
-                                                label = { Text(n) })
-                                        }
+                    Column(Modifier.padding(vertical = 4.dp)) {
+                        Text(g.title.uppercase(), Modifier.padding(start = 14.dp, top = 6.dp, bottom = 2.dp),
+                            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        items.chunked(4).forEach { row ->
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                                row.forEach { it ->
+                                    Box(Modifier.weight(1f)) {
+                                        ParamControl(it.desc, it.value, it.text, it.onFinished, it.onChange)
                                     }
                                 }
-                            } else Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(kn.label, Modifier.width(64.dp), style = MaterialTheme.typography.labelMedium)
-                                Slider(value = v.toFloat(), valueRange = kn.min.toFloat()..kn.max.toFloat(),
-                                    onValueChange = { edit(kn.key, it.toInt().coerceIn(kn.min, kn.max), false) },
-                                    onValueChangeFinished = { schedule(true) },
-                                    modifier = Modifier.weight(1f))
-                                Text(if (unit.isEmpty()) txt else "$txt $unit", Modifier.width(88.dp),
-                                    color = cs.primary, fontFamily = SloopFontFamily, style = MaterialTheme.typography.labelMedium)
+                                repeat(4 - row.size) { Box(Modifier.weight(1f)) }
                             }
                         }
                     }
                 }
             }
 
-            item {
+            item(key = "actions", span = StaggeredGridItemSpan.FullLine) {
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(if (ed.stored) "Stored on the FM-1" else "Not stored yet: kept in RAM until you press Store",
@@ -375,6 +354,32 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                                 saver.launch("${kit.name.ifBlank { "kit" }.lowercase().replace(Regex("[^a-z0-9]+"), "-")}.sloopdrums.json")
                             }) { Text("Save file") }
                             OutlinedButton(enabled = !ed.busy, onClick = { opener.launch(arrayOf("*/*")) }) { Text("Open file") }
+                        }
+                        val names = ed.list?.names.orEmpty()
+                        var open by remember { mutableStateOf(false) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f)) {
+                                OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
+                                    Text("From ${names.getOrNull(ed.from) ?: "?"}  ▾", maxLines = 1)
+                                }
+                                DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                                    names.forEachIndexed { i, n -> DropdownMenuItem(text = { Text(n) },
+                                        onClick = { ed.from = i; open = false }) }
+                                }
+                            }
+                            Button(enabled = !ed.busy, onClick = {
+                                val i = ed.from
+                                confirm = Triple("Copy kit?", "SYN${ed.k + 1} becomes a copy of ${names.getOrNull(i)}; your edits to it are lost.") {
+                                    op {
+                                        val rc = ctl.dsynCopy(ed.k, i)
+                                        if (rc != 0) { ed.say("Copy failed (rc $rc)", true); return@op }
+                                        ed.pend.clear()
+                                        load(ed.k)
+                                        ed.stored = false
+                                        ed.say("Copied ${names.getOrNull(i)}")
+                                    }
+                                }
+                            }) { Text("Copy") }
                         }
                         Text("Every change plays on the FM-1 at once. Store keeps SYN1–SYN4 in flash with the settings (stop the song first).",
                             style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
