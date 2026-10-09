@@ -40,7 +40,7 @@ fun MixerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
     val cs = MaterialTheme.colorScheme
 
     Column(Modifier.fillMaxSize()) {
-        ScreenHeader("Mixer", state)
+        ScreenHeader("Mixer", state, NAV_INSET)
         Row(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             tracks.tracks.forEachIndexed { i, tr ->
                 val selected = i == state.selectedTrack

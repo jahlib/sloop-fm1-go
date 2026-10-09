@@ -72,7 +72,7 @@ fun MidiBrowserScreen(vm: SloopViewModel, state: DeviceState, openSequencer: () 
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(8.dp, 0.dp, 8.dp, 96.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { ScreenHeader("MIDI patterns", state) }
+        item { ScreenHeader("MIDI patterns", state, NAV_INSET) }
         item {
             Row(Modifier.padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (k in ClipKind.entries) FilterChip(selected = kind == k, onClick = { kind = k; message = null },

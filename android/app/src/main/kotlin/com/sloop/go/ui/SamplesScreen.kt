@@ -214,7 +214,7 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
     var confirm by remember { mutableStateOf<Triple<String, String, () -> Unit>?>(null) }
 
     LazyColumn(Modifier.fillMaxSize()) {
-        item { ScreenHeader("Samples", state) }
+        item { ScreenHeader("Samples", state, NAV_INSET) }
 
         // ---- 1: the slot ----
         item {

@@ -148,7 +148,7 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
         verticalItemSpacing = 8.dp,
     ) {
         item(key = "header", span = StaggeredGridItemSpan.FullLine) {
-            ScreenHeader("Sound · Track ${state.selectedTrack + 1}", state)
+            ScreenHeader("Sound · Track ${state.selectedTrack + 1}", state, NAV_INSET)
         }
 
         // Track + preset/kit selectors: two dropdown buttons on one row.
@@ -318,7 +318,7 @@ private val SKIP = setOf("SLOT", "NAME", "LOAD", "SAVE", "SET", "CLRSQ", "INIT",
 @Composable
 fun NotReady(title: String, state: DeviceState, onDevice: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize()) {
-        item { ScreenHeader(title, state) }
+        item { ScreenHeader(title, state, NAV_INSET) }
         item {
             Card(Modifier.fillMaxWidth().padding(16.dp)) {
                 Column(Modifier.padding(16.dp)) {

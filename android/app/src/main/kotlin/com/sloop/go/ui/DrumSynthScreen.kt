@@ -108,7 +108,7 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     }
     if (state.info.proto < 10) {
         LazyColumn(Modifier.fillMaxSize()) {
-            item { ScreenHeader("Drum synth", state) }
+            item { ScreenHeader("Drum synth", state, NAV_INSET) }
             item {
                 Card(Modifier.fillMaxWidth().padding(16.dp)) {
                     Text("The synthesised drum kits SYN1–SYN4 need SLOOP 2.5 or newer.", Modifier.padding(16.dp))
@@ -252,7 +252,7 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalItemSpacing = 8.dp,
     ) {
-        item(key = "header", span = StaggeredGridItemSpan.FullLine) { ScreenHeader("Drum synth", state) }
+        item(key = "header", span = StaggeredGridItemSpan.FullLine) { ScreenHeader("Drum synth", state, NAV_INSET) }
 
         if (ed.busy || ed.message != null) item(key = "msg", span = StaggeredGridItemSpan.FullLine) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {

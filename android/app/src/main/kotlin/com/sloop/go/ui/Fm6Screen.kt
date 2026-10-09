@@ -8,25 +8,21 @@ package com.sloop.go.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -43,27 +39,22 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.sloop.go.device.DeviceState
 import com.sloop.go.device.Link
+import com.sloop.go.proto.Desc
 import com.sloop.go.proto.Fm6
-import kotlin.math.roundToInt
+import com.sloop.go.proto.Fmt
 import kotlinx.coroutines.delay
 
 private fun rcText(rc: Int): String = when (rc) {
@@ -82,7 +73,7 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
     }
     if (!state.fm6Supported) {
         LazyColumn(Modifier.fillMaxSize()) {
-            item { ScreenHeader("FM6 patches", state) }
+            item { ScreenHeader("FM6 patches", state, NAV_INSET) }
             item {
                 Card(Modifier.fillMaxWidth().padding(16.dp)) {
                     Text("This FM-1 firmware has no FM6 engine. Update to SLOOP 2.4 or newer.",
@@ -184,12 +175,19 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
 
     val v = ed.voice
     val cs = MaterialTheme.colorScheme
+    val defs = remember { Fm6.init() }
+    val carriers = Fm6.carriers(v[Fm6.ALG])
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp, 0.dp, 8.dp, 96.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { ScreenHeader("FM6 patches", state) }
+    LazyVerticalStaggeredGrid(
+        columns = StaggeredGridCells.Fixed(2),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(8.dp, 8.dp, 8.dp, 96.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalItemSpacing = 8.dp,
+    ) {
+        item(key = "header", span = StaggeredGridItemSpan.FullLine) { ScreenHeader("FM6 patches", state, NAV_INSET) }
 
-        if (ed.busy || ed.message != null) item {
+        if (ed.busy || ed.message != null) item(key = "msg", span = StaggeredGridItemSpan.FullLine) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                 if (ed.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 ed.message?.let {
@@ -200,7 +198,7 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
         }
 
         // ---- target: which track plays / receives the patch
-        item {
+        item(key = "track", span = StaggeredGridItemSpan.FullLine) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Track", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -240,7 +238,7 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
         }
 
         // ---- the device's patch slots: F1..F8 factory, B1..B27 bank
-        item {
+        item(key = "slots", span = StaggeredGridItemSpan.FullLine) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Slots", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -308,7 +306,7 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
         }
 
         // ---- files
-        item {
+        item(key = "files", span = StaggeredGridItemSpan.FullLine) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("DX7 SysEx files", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -371,94 +369,78 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
             }
         }
 
-        // ---- the voice
-        item {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Voice", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    OutlinedTextField(
-                        value = Fm6.name(v), onValueChange = { ed.rename(it) }, singleLine = true,
-                        label = { Text("Name (10 characters)") }, modifier = Modifier.fillMaxWidth())
-                    val alg = v[Fm6.ALG]
-                    CellRow {
-                        EnumCell("ALG", List(32) { "${it + 1}" }, alg, Modifier.weight(1f)) { ed.set(Fm6.ALG, it) }
-                        NumCell("FB", v[Fm6.FB], Fm6.max(Fm6.FB), Modifier.weight(1f)) { ed.set(Fm6.FB, it) }
-                        NumCell("OKS", v[Fm6.OKS], 1, Modifier.weight(1f)) { ed.set(Fm6.OKS, it) }
-                        NumCell("TRNSP", v[Fm6.TRNSP], Fm6.max(Fm6.TRNSP), Modifier.weight(1f)) { ed.set(Fm6.TRNSP, it) }
-                    }
-                    Text("Carriers: " + Fm6.carriers(alg).joinToString(" ") { "OP$it" } +
-                        " · feedback: OP${Fm6.feedbackOp(alg) ?: "-"}",
-                        style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
-                    Text("LFO", style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp))
-                    CellRow {
-                        EnumCell("WAVE", Fm6.LFO_WAVES, v[Fm6.LFW], Modifier.weight(1f)) { ed.set(Fm6.LFW, it) }
-                        NumCell("SPD", v[Fm6.LFS], 99, Modifier.weight(1f)) { ed.set(Fm6.LFS, it) }
-                        NumCell("DLY", v[Fm6.LFD], 99, Modifier.weight(1f)) { ed.set(Fm6.LFD, it) }
-                        NumCell("SYNC", v[Fm6.LKS], 1, Modifier.weight(1f)) { ed.set(Fm6.LKS, it) }
-                    }
-                    CellRow {
-                        NumCell("PMD", v[Fm6.LPMD], 99, Modifier.weight(1f)) { ed.set(Fm6.LPMD, it) }
-                        NumCell("AMD", v[Fm6.LAMD], 99, Modifier.weight(1f)) { ed.set(Fm6.LAMD, it) }
-                        NumCell("PMS", v[Fm6.LPMS], 7, Modifier.weight(1f)) { ed.set(Fm6.LPMS, it) }
-                        Spacer(Modifier.weight(1f))
-                    }
-                    Text("Pitch EG", style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp))
-                    CellRow { for (k in 0 until 4) NumCell("R${k + 1}", v[Fm6.PR1 + k], 99, Modifier.weight(1f)) { ed.set(Fm6.PR1 + k, it) } }
-                    CellRow { for (k in 0 until 4) NumCell("L${k + 1}", v[Fm6.PL1 + k], 99, Modifier.weight(1f)) { ed.set(Fm6.PL1 + k, it) } }
-                }
+        // ---- the voice: name, algorithm, LFO and the pitch envelope
+        item(key = "voice") {
+            Fm6Block("VOICE") {
+                OutlinedTextField(
+                    value = Fm6.name(v), onValueChange = { ed.rename(it) }, singleLine = true,
+                    label = { Text("Name (10 characters)") },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp))
+                Fm6Knobs(listOf(
+                    Fm6Ctl("ALG", Fm6.ALG, Fmt.ENUM, List(32) { "${it + 1}" }),
+                    Fm6Ctl("FB", Fm6.FB),
+                    Fm6Ctl("TRNSP", Fm6.TRNSP),
+                    Fm6Ctl("OKS", Fm6.OKS, Fmt.ONOFF),
+                ), v, defs, ed)
+                Text("Carriers: " + carriers.joinToString(" ") { "OP$it" } +
+                    " · feedback: OP${Fm6.feedbackOp(v[Fm6.ALG]) ?: "-"}",
+                    Modifier.padding(horizontal = 14.dp),
+                    style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+            }
+        }
+        item(key = "lfo") {
+            Fm6Block("LFO") {
+                Fm6Knobs(listOf(
+                    Fm6Ctl("WAVE", Fm6.LFW, Fmt.ENUM, Fm6.LFO_WAVES),
+                    Fm6Ctl("SPD", Fm6.LFS),
+                    Fm6Ctl("DLY", Fm6.LFD),
+                    Fm6Ctl("SYNC", Fm6.LKS, Fmt.ONOFF),
+                    Fm6Ctl("PMD", Fm6.LPMD),
+                    Fm6Ctl("AMD", Fm6.LAMD),
+                    Fm6Ctl("PMS", Fm6.LPMS),
+                ), v, defs, ed)
+            }
+        }
+        item(key = "peg") {
+            Fm6Block("PITCH EG") {
+                Fm6Knobs(List(8) { Fm6Ctl(if (it < 4) "R${it + 1}" else "L${it - 3}", Fm6.PR1 + it) }, v, defs, ed)
             }
         }
 
         // ---- the six operators
-        val carriers = Fm6.carriers(v[Fm6.ALG])
         for (n in 1..Fm6.OPS) item(key = "op$n") {
             fun f(name: String) = Fm6.at(n, name)
             Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("OP$n" + if (n in carriers) " ●" else "", style = MaterialTheme.typography.titleSmall,
+                Column(Modifier.padding(vertical = 4.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(start = 14.dp, top = 6.dp, end = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("OP$n" + if (n in carriers) " ●" else "", style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold, color = if (n in carriers) cs.primary else cs.onSurface,
                             modifier = Modifier.weight(1f))
                         Text(Fm6.freqText(v, n), style = MaterialTheme.typography.labelMedium,
                             fontFamily = SloopFontFamily, color = cs.onSurfaceVariant)
                     }
                     EgPreview(IntArray(4) { v[f("R${it + 1}")] }, IntArray(4) { v[f("L${it + 1}")] },
-                        Modifier.fillMaxWidth().height(44.dp))
-                    CellRow { for (k in 1..4) NumCell("R$k", v[f("R$k")], 99, Modifier.weight(1f)) { ed.set(f("R$k"), it) } }
-                    CellRow { for (k in 1..4) NumCell("L$k", v[f("L$k")], 99, Modifier.weight(1f)) { ed.set(f("L$k"), it) } }
-                    CellRow {
-                        NumCell("BP", v[f("BP")], 99, Modifier.weight(1f)) { ed.set(f("BP"), it) }
-                        NumCell("LD", v[f("LD")], 99, Modifier.weight(1f)) { ed.set(f("LD"), it) }
-                        NumCell("RD", v[f("RD")], 99, Modifier.weight(1f)) { ed.set(f("RD"), it) }
-                        NumCell("RS", v[f("RS")], 7, Modifier.weight(1f)) { ed.set(f("RS"), it) }
-                    }
-                    CellRow {
-                        EnumCell("LC", Fm6.CURVES, v[f("LC")], Modifier.weight(1f)) { ed.set(f("LC"), it) }
-                        EnumCell("RC", Fm6.CURVES, v[f("RC")], Modifier.weight(1f)) { ed.set(f("RC"), it) }
-                        NumCell("AMS", v[f("AMS")], 3, Modifier.weight(1f)) { ed.set(f("AMS"), it) }
-                        NumCell("KVS", v[f("KVS")], 7, Modifier.weight(1f)) { ed.set(f("KVS"), it) }
-                    }
-                    CellRow {
-                        NumCell("OL", v[f("OL")], 99, Modifier.weight(1f)) { ed.set(f("OL"), it) }
-                        EnumCell("MODE", listOf("RATIO", "FIXED"), v[f("MODE")], Modifier.weight(1f)) { ed.set(f("MODE"), it) }
-                        NumCell("FC", v[f("FC")], 31, Modifier.weight(1f)) { ed.set(f("FC"), it) }
-                        NumCell("FF", v[f("FF")], 99, Modifier.weight(1f)) { ed.set(f("FF"), it) }
-                    }
-                    CellRow {
-                        NumCell("DET", v[f("DET")], 14, Modifier.weight(1f)) { ed.set(f("DET"), it) }
-                        Spacer(Modifier.weight(3f))
-                    }
+                        Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 8.dp))
+                    Fm6Knobs(listOf(
+                        Fm6Ctl("R1", f("R1")), Fm6Ctl("R2", f("R2")), Fm6Ctl("R3", f("R3")), Fm6Ctl("R4", f("R4")),
+                        Fm6Ctl("L1", f("L1")), Fm6Ctl("L2", f("L2")), Fm6Ctl("L3", f("L3")), Fm6Ctl("L4", f("L4")),
+                        Fm6Ctl("BP", f("BP")), Fm6Ctl("LD", f("LD")), Fm6Ctl("RD", f("RD")), Fm6Ctl("RS", f("RS")),
+                        Fm6Ctl("LC", f("LC"), Fmt.ENUM, Fm6.CURVES), Fm6Ctl("RC", f("RC"), Fmt.ENUM, Fm6.CURVES),
+                        Fm6Ctl("AMS", f("AMS")), Fm6Ctl("KVS", f("KVS")),
+                        Fm6Ctl("OL", f("OL")), Fm6Ctl("MODE", f("MODE"), Fmt.ENUM, listOf("RATIO", "FIXED")),
+                        Fm6Ctl("FC", f("FC")), Fm6Ctl("FF", f("FF")),
+                        Fm6Ctl("DET", f("DET")),
+                    ), v, defs, ed)
                 }
             }
         }
 
-        item {
+        item(key = "legend", span = StaggeredGridItemSpan.FullLine) {
             Text("R1..R4 / L1..L4: EG rates and levels; BP LD RD LC RC: keyboard level scaling; RS: rate scaling; " +
                 "AMS: LFO amplitude modulation; KVS: velocity; OL: output level; MODE: ratio / fixed; " +
                 "FC FF: coarse / fine frequency; DET: detune (7 = centre). ● = carrier. " +
-                "Drag a value sideways to change it, tap to type it.",
+                "Double-tap a knob for the init value.",
                 Modifier.padding(horizontal = 8.dp), style = MaterialTheme.typography.bodySmall,
                 color = cs.onSurfaceVariant)
         }
@@ -478,76 +460,34 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
 private fun fileName(name: String) = name.trim().ifBlank { "fm6-voice" }
     .replace(Regex("[^A-Za-z0-9._-]+"), "_")
 
-@Composable
-private fun CellRow(content: @Composable RowScope.() -> Unit) =
-    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), content = content)
-
-/** A numeric cell: drag sideways to change, tap to type. */
-@Composable
-private fun NumCell(label: String, value: Int, max: Int, modifier: Modifier, onChange: (Int) -> Unit) {
-    val density = LocalDensity.current
-    val cur by rememberUpdatedState(value)
-    val change by rememberUpdatedState(onChange)
-    var dragged by remember { mutableFloatStateOf(0f) }
-    var editing by remember { mutableStateOf(false) }
-    var text by remember { mutableStateOf("") }
-    Column(
-        modifier.clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
-            .pointerInput(max) {
-                val step = with(density) { (if (max > 20) 5.dp else 22.dp).toPx() }
-                detectHorizontalDragGestures(
-                    onDragStart = { dragged = cur.toFloat() },
-                    onHorizontalDrag = { c, dx ->
-                        c.consume()
-                        dragged = (dragged + dx / step).coerceIn(0f, max.toFloat())
-                        val next = dragged.roundToInt()
-                        if (next != cur) change(next)
-                    },
-                )
-            }
-            .pointerInput(Unit) { detectTapGestures(onTap = { text = "$cur"; editing = true }) }
-            .padding(vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-        Text("$value", style = MaterialTheme.typography.titleMedium, fontFamily = SloopFontFamily,
-            color = MaterialTheme.colorScheme.primary)
-    }
-    if (editing) AlertDialog(
-        onDismissRequest = { editing = false },
-        title = { Text(label) },
-        text = {
-            OutlinedTextField(
-                value = text, onValueChange = { text = it.filter(Char::isDigit).take(3) }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                suffix = { Text("0–$max") })
-        },
-        confirmButton = {
-            TextButton(onClick = { text.toIntOrNull()?.let { change(it.coerceIn(0, max)) }; editing = false }) { Text("OK") }
-        },
-        dismissButton = { TextButton(onClick = { editing = false }) { Text("Cancel") } },
-    )
+/** One editable voice byte, rendered by ParamControl as a knob / switch / enum dropdown. */
+private class Fm6Ctl(val label: String, val i: Int, val fmt: Int = Fmt.INT, val names: List<String> = emptyList()) {
+    fun desc(def: Int) = Desc(2, i, fmt, 0, Fm6.max(i), def, label, "", names)
 }
 
-/** A choice cell: tap for the list. */
+/** A named card in the 2-column grid, like a Sound group block. */
 @Composable
-private fun EnumCell(label: String, names: List<String>, value: Int, modifier: Modifier, onChange: (Int) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box(modifier) {
-        Column(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
-                .clickable { open = true }.padding(vertical = 6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-            Text(names.getOrElse(value) { "$value" }, style = MaterialTheme.typography.titleMedium,
-                fontFamily = SloopFontFamily, color = MaterialTheme.colorScheme.secondary, maxLines = 1)
+private fun Fm6Block(title: String, content: @Composable () -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(vertical = 4.dp)) {
+            Text(title, Modifier.padding(start = 14.dp, top = 6.dp, bottom = 2.dp),
+                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            content()
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            names.forEachIndexed { i, n ->
-                DropdownMenuItem(text = { Text(n, fontWeight = if (i == value) FontWeight.Bold else FontWeight.Normal) },
-                    onClick = { open = false; onChange(i) })
+    }
+}
+
+/** Controls in rows of four; a double tap on a knob restores the init voice's value. */
+@Composable
+private fun Fm6Knobs(items: List<Fm6Ctl>, v: IntArray, defs: IntArray, ed: Fm6Editor) {
+    items.chunked(4).forEach { row ->
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+            row.forEach { c ->
+                Box(Modifier.weight(1f)) {
+                    ParamControl(c.desc(defs[c.i]), v[c.i]) { ed.set(c.i, it) }
+                }
             }
+            repeat(4 - row.size) { Box(Modifier.weight(1f)) }
         }
     }
 }

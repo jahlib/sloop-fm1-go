@@ -6,12 +6,27 @@
 package com.sloop.go.ui
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -36,6 +51,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -98,8 +115,8 @@ fun SongScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
     val bars = rows?.sumOf { it.bars * maxOf(1, it.times) } ?: 0
     val big = Modifier.height(52.dp)
 
-    Column(Modifier.fillMaxSize()) {
-        ScreenHeader("Song", state)
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        ScreenHeader("Song", state, NAV_INSET)
         if (ed.busy || ed.message != null) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
             if (ed.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             ed.message?.let { Text(it, color = if (ed.isError) cs.error else cs.primary, style = MaterialTheme.typography.bodySmall) }
@@ -111,46 +128,46 @@ fun SongScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
         }
 
         // the song as vertical strips, left to right in playing order
-        LazyRow(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+        LazyRow(Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             itemsIndexed(rows, key = { i, _ -> i }) { k, r ->
                 val maxTimes = (Arr.STEPS - (n - r.times)).coerceAtLeast(1)
-                Card(Modifier.width(132.dp).fillMaxHeight()) {
-                    Column(Modifier.fillMaxSize().padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                Card(Modifier.width(132.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("STEP ${k + 1}", style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("${k + 1}", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
+                                color = cs.onSurfaceVariant)
+                            IconButton(enabled = k > 0, onClick = { ed.edit { it.add(k - 1, it.removeAt(k)) } },
+                                modifier = Modifier.size(30.dp)) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Move left",
+                                    modifier = Modifier.size(18.dp))
+                            }
+                            IconButton(enabled = k < rows.size - 1, onClick = { ed.edit { it.add(k + 1, it.removeAt(k)) } },
+                                modifier = Modifier.size(30.dp)) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Move right",
+                                    modifier = Modifier.size(18.dp))
+                            }
+                            IconButton(enabled = rows.size > 1, onClick = { ed.edit { it.removeAt(k) } },
+                                modifier = Modifier.size(30.dp)) {
+                                Icon(Icons.Filled.Delete, contentDescription = "Delete step",
+                                    modifier = Modifier.size(18.dp))
+                            }
+                        }
                         for (pair in listOf(0 to 1, 2 to 3)) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             for (s in pair.toList()) {
                                 val on = r.scene == s
                                 val click = { ed.edit { it[k] = it[k].copy(scene = s) } }
-                                if (on) Button(onClick = click, modifier = Modifier.size(52.dp), contentPadding = PaddingValues(0.dp)) {
-                                    Text("${LETTERS[s]}", style = MaterialTheme.typography.titleLarge)
-                                } else OutlinedButton(onClick = click, modifier = Modifier.size(52.dp), contentPadding = PaddingValues(0.dp)) {
-                                    Text("${LETTERS[s]}", style = MaterialTheme.typography.titleLarge)
+                                if (on) Button(onClick = click, modifier = Modifier.size(48.dp), contentPadding = PaddingValues(0.dp)) {
+                                    Text("${LETTERS[s]}", style = MaterialTheme.typography.titleMedium)
+                                } else OutlinedButton(onClick = click, modifier = Modifier.size(48.dp), contentPadding = PaddingValues(0.dp)) {
+                                    Text("${LETTERS[s]}", style = MaterialTheme.typography.titleMedium)
                                 }
                             }
                         }
-                        Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("BARS", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
-                                Text("${r.bars}", color = cs.primary, fontFamily = SloopFontFamily, style = MaterialTheme.typography.titleMedium)
-                                VerticalSlider(r.bars, 1, Arr.MAX_BARS, { v -> ed.edit { it[k] = it[k].copy(bars = v) } }, Modifier.weight(1f))
-                            }
-                            Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("TIMES", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
-                                Text("${r.times}", color = cs.primary, fontFamily = SloopFontFamily, style = MaterialTheme.typography.titleMedium)
-                                VerticalSlider(r.times, 1, maxTimes.coerceAtLeast(2), { v -> ed.edit { it[k] = it[k].copy(times = v.coerceAtMost(maxTimes)) } },
-                                    Modifier.weight(1f))
-                            }
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            IconButton(enabled = k > 0, onClick = { ed.edit { it.add(k - 1, it.removeAt(k)) } },
-                                modifier = Modifier.size(44.dp)) { Text("◀", style = MaterialTheme.typography.titleMedium) }
-                            IconButton(enabled = k < rows.size - 1, onClick = { ed.edit { it.add(k + 1, it.removeAt(k)) } },
-                                modifier = Modifier.size(44.dp)) { Text("▶", style = MaterialTheme.typography.titleMedium) }
-                        }
-                        OutlinedButton(enabled = rows.size > 1, onClick = { ed.edit { it.removeAt(k) } },
-                            modifier = Modifier.fillMaxWidth().then(big), contentPadding = PaddingValues(0.dp)) { Text("Delete") }
+                        Stepper("BARS", r.bars, 1, Arr.MAX_BARS) { v -> ed.edit { it[k] = it[k].copy(bars = v) } }
+                        Stepper("TIMES", r.times, 1, maxTimes) { v -> ed.edit { it[k] = it[k].copy(times = v.coerceAtMost(maxTimes)) } }
                     }
                 }
             }
@@ -184,5 +201,47 @@ fun SongScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
             }
         }
         Spacer(Modifier.height(80.dp))
+    }
+}
+
+/** A labelled − value + row; the buttons fire on press and keep repeating while held (BARS climbs to 64). */
+@Composable
+private fun Stepper(label: String, value: Int, min: Int, max: Int, onChange: (Int) -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        RepButton("−", value > min) { onChange(value - 1) }
+        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
+            Text("$value", color = cs.primary, fontFamily = SloopFontFamily,
+                style = MaterialTheme.typography.titleMedium)
+        }
+        RepButton("+", value < max) { onChange(value + 1) }
+    }
+}
+
+/** A small square button that fires once on touch, then about every 90 ms while the finger stays down. */
+@Composable
+private fun RepButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val latest by rememberUpdatedState(onClick)
+    val scope = rememberCoroutineScope()
+    Box(Modifier.size(36.dp).clip(RoundedCornerShape(8.dp))
+        .background(if (enabled) cs.surfaceVariant else cs.surfaceVariant.copy(alpha = 0.25f))
+        .pointerInput(enabled) {
+            if (!enabled) return@pointerInput
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                down.consume()
+                latest()
+                val job = scope.launch {
+                    delay(450)
+                    while (true) { latest(); delay(90) }
+                }
+                while (awaitPointerEvent().changes.any { it.id == down.id && it.pressed }) {}
+                job.cancel()
+            }
+        }, contentAlignment = Alignment.Center) {
+        Text(label, style = MaterialTheme.typography.titleMedium,
+            color = if (enabled) cs.primary else cs.onSurfaceVariant.copy(alpha = 0.4f))
     }
 }

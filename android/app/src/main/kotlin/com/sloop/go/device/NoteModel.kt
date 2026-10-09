@@ -37,6 +37,32 @@ fun PNote.freeParts(others: List<PNote>, mono: Boolean): List<PNote> {
     return parts
 }
 
+/**
+ * How far one [edge] (1 = right, -1 = left) of every note in [sel] may shift together, as the inclusive
+ * delta range (empty when lo > hi). The group keeps its shape: the range stops where any note would drop
+ * below one step, leave the pattern or run over a same-pitch neighbour in [others]. [ratcheted] blocks
+ * growth over a ratcheted step (extend right is capped at length 1, extend left is forbidden).
+ */
+fun resizeDeltaBounds(sel: List<PNote>, others: List<PNote>, length: Int, edge: Int,
+                      ratcheted: (PNote) -> Boolean): Pair<Int, Int> {
+    var lo = Int.MIN_VALUE
+    var hi = Int.MAX_VALUE
+    for (n in sel) {
+        if (edge > 0) {
+            val maxEnd = others.filter { it.pitch == n.pitch && it.start > n.start }
+                .minOfOrNull { it.start - 1 } ?: (length - 1)
+            lo = maxOf(lo, 1 - n.len); hi = minOf(hi, maxEnd - n.end)
+            if (ratcheted(n)) hi = minOf(hi, 1 - n.len)
+        } else {
+            val minStart = others.filter { it.pitch == n.pitch && it.end < n.start }
+                .maxOfOrNull { it.end + 1 } ?: 0
+            lo = maxOf(lo, minStart - n.start); hi = minOf(hi, n.len - 1)
+            if (ratcheted(n)) lo = maxOf(lo, 0)
+        }
+    }
+    return lo to hi
+}
+
 /** P_VOICE: 0 POLY, 1 MONO, 2 LEG, 3 UNI (firmware enum V_POLY..V_UNISON). */
 const val V_POLY = 0
 

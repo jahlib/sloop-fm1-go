@@ -770,6 +770,31 @@ class DeviceController(context: Context) {
         }
     }
 
+    /**
+     * Stretches or shrinks one [edge] (1 = right, -1 = left) of the notes named by [keys] ([noteKey]) by the
+     * same [delta] steps, so the selection keeps its shape; the applied delta is clamped so no note drops
+     * below one step, leaves the pattern or runs over a same-pitch neighbour. One batch through the queue.
+     */
+    fun resizeNotes(keys: Set<Int>, edge: Int, delta: Int) {
+        if (delta == 0 || edge == 0) return
+        editNotes { s, notes ->
+            val sel = notes.filter { noteKey(it.pitch, it.start) in keys }
+            if (sel.isEmpty()) return@editNotes null
+            val others = notes - sel.toSet()
+            val (lo, hi) = resizeDeltaBounds(sel, others, s.patternLength, edge) {
+                s.steps.getOrNull(it.start)?.rat?.let { r -> r != 0 } == true
+            }
+            val d = if (lo <= hi) delta.coerceIn(lo, hi) else 0
+            if (d == 0) return@editNotes null
+            var out = notes
+            for (n in sel) {
+                val r = if (edge > 0) n.copy(len = n.len + d) else n.copy(start = n.start + d, len = n.len - d)
+                out = if (voiceMode(s) == V_POLY) out - n + r else (out - n).carveCovered(r) + r
+            }
+            out.takeIf { it != notes }
+        }
+    }
+
     /** Resizes every note that starts at [index] (a chord shares one duration in the step editor). */
     fun setNoteLength(index: Int, requestedLength: Int) {
         editNotes { s, notes ->

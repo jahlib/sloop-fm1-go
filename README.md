@@ -31,21 +31,28 @@ so edits reach the FM-1 immediately.
 ## Features
 
 - **Sound** — all sound parameters in collapsible blocks with touch knobs, engine / kit and preset pickers, track selector.
-- **Sequencer** — drum grid and synth piano-roll with pinch zoom, Live / Store (draft) modes, voice modes, step nudge /
-  fill / parameter locks (SLOOP 2.4); **Select** mode in the piano roll and the drum grid (frame-select, drag the whole figure, hold to clone it,
-  existing notes win on overlap), ±12 transpose; **Save / Load** of note patterns as MIDI files kept inside the app
-  (separate piano-roll and drum lists with previews; tap to load, or hold one and drag it onto the piano roll; 12 ready
-  drum and 12 ready piano patterns included). Only the notes are stored, never the sound or knob positions. A **MIDI
-  patterns** page renames, deletes and loads them onto any track.
+- **Sequencer** — drum grid and synth piano-roll with pinch zoom and a single icon toolbar, Live / Store (draft)
+  modes, voice modes, step nudge / fill / parameter locks (SLOOP 2.4); **Select** mode in the piano roll and the drum
+  grid (frame-select — or just hold empty space in the piano roll, drag the whole figure, stretch them all by one
+  note's edge, hold to clone it, existing notes win on overlap), ±12 transpose with auto-fit; **Save / Load** of note
+  patterns as MIDI files kept inside the app (separate piano-roll and drum lists with previews; tap to load, or hold
+  one and drag it onto the piano roll; 12 ready drum and 12 ready piano patterns included). Only the notes are stored,
+  never the sound or knob positions. A **MIDI patterns** page renames, deletes and loads them onto any track.
 - **FM6 patches** (SLOOP 2.4) — slot library, DX7 SysEx import / export from phone storage, upload to the bank or to a
-  track, and a full six-operator editor.
+  track, and a full six-operator editor in Sound-style knob blocks: per-operator envelope previews, carriers and
+  feedback marking, LFO and pitch-EG blocks, double-tap a knob to restore the init value.
+- **Drum synth** (SLOOP 2.5) — the four synthesised kits SYN1–SYN4 in Sound-style knob blocks, heard while editing.
+- **Song** (SLOOP 2.5) — vertical step cards: A–D section buttons, Bars / Times steppers, move and delete, loop,
+  one-tap Add step, read / send.
 - **Samples** (SLOOP 2.4) — USR1–4 user sample slots. Load audio files from phone storage **or record straight from
   the mic** (voice / camera / raw inputs selectable) and drop the take into the slot: **Files** mode maps each file to
   its note (root from the file name, the rest of the keyboard splits itself), **Chop** mode cuts one take into pieces
   on a touch waveform — markers snap to hits, drag to move, per-chop keep / length, auto-fit to the slot. Everything
   is normalized, resampled to 22050 Hz and encoded to IMA ADPCM in-app, then written to the FM-1 over the editor
   protocol with progress — ready to play via SAMPLE on a track.
-- **Mixer** and **Device** pages, Play / Stop over USB-MIDI.
+- **Mixer** — four vertical channel strips with faders, Mute and Edit.
+- **Device** — connection and firmware info. Play / Stop and the page menu are pinned in the top-left corner of every
+  page and wake up once the FM-1 is connected.
 
 Requires a phone with USB host (OTG) and a USB-C cable to the FM-1. Written for SLOOP 2.4 (editor protocol v9);
 features that need newer firmware are hidden or disabled on older SLOOP.

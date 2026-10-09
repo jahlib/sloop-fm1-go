@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Equalizer
@@ -44,9 +45,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -66,6 +66,7 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sloop.go.R
@@ -100,19 +101,6 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
 
     val navMenu: @Composable () -> Unit = {
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            if (state.link == Link.READY) {
-                DropdownMenuItem(
-                    text = { Text(if (state.playing) "Stop" else "Play") },
-                    leadingIcon = {
-                        Icon(
-                            if (state.playing) Icons.Filled.Stop else Icons.Filled.PlayArrow,
-                            contentDescription = null,
-                        )
-                    },
-                    onClick = { vm.controller.setPlaying(!state.playing) },
-                )
-                HorizontalDivider()
-            }
             Tab.entries.forEach { t ->
                 DropdownMenuItem(
                     text = { Text(t.title) },
@@ -123,18 +111,27 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
         }
     }
 
-    Scaffold(
-        floatingActionButton = {
-            if (tab != Tab.SEQ) Box {
-                ExtendedFloatingActionButton(
-                    onClick = { menuOpen = true },
-                    icon = { Icon(Icons.Filled.Menu, contentDescription = "Navigation") },
-                    text = { Text(tab.title) },
-                )
+    // play/stop + the page menu, pinned top-left on every screen (the sequencer keeps it in its own row);
+    // both disabled until the FM-1 is connected
+    val navButtons: @Composable () -> Unit = {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { vm.controller.setPlaying(!state.playing) },
+                enabled = state.link == Link.READY) {
+                Icon(if (state.playing) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+                    contentDescription = "Play/Stop",
+                    tint = if (state.playing) MaterialTheme.colorScheme.primary
+                        else LocalContentColor.current)
+            }
+            Box {
+                IconButton(onClick = { menuOpen = true }, enabled = state.link == Link.READY) {
+                    Icon(Icons.Filled.Menu, contentDescription = "Navigation")
+                }
                 navMenu()
             }
-        },
-    ) { padding ->
+        }
+    }
+
+    Scaffold { padding ->
         Box(
             Modifier
                 .fillMaxSize()
@@ -143,21 +140,7 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
         ) {
             when (tab) {
                 Tab.PARAMS -> ParamsScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
-                Tab.SEQ -> SequencerScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (state.link == Link.READY) IconButton(
-                            onClick = { vm.controller.setPlaying(!state.playing) }) {
-                            Icon(if (state.playing) Icons.Filled.Stop else Icons.Filled.PlayArrow,
-                                contentDescription = "Play/Stop",
-                                tint = if (state.playing) MaterialTheme.colorScheme.primary
-                                    else LocalContentColor.current)
-                        }
-                        Box {
-                            IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.Menu, contentDescription = "Navigation") }
-                            navMenu()
-                        }
-                    }
-                })
+                Tab.SEQ -> SequencerScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.FM6 -> Fm6Screen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.SAMPLES -> SamplesScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.DRUMSYNTH -> DrumSynthScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
@@ -166,14 +149,27 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
                 Tab.MIX -> MixerScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.SETTINGS -> ConnectScreen(vm, state)
             }
+            // the sequencer embeds the cluster in its control row only once the device info is loaded
+            val seqHasNav = tab == Tab.SEQ && state.link == Link.READY && state.info != null
+            if (!seqHasNav) {
+                Surface(Modifier.align(Alignment.TopStart).padding(6.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    tonalElevation = 2.dp, shadowElevation = 4.dp) {
+                    navButtons()
+                }
+            }
         }
     }
 }
 
+/** Extra space the fixed top-left nav cluster needs; screens other than Device pad their header by it. */
+val NAV_INSET = 100.dp
+
 /** Non-sticky header rendered as the first scrollable item, so it slides away on scroll. */
 @Composable
-fun ScreenHeader(title: String, state: DeviceState) {
-    Column(Modifier.fillMaxWidth().padding(16.dp, 14.dp, 16.dp, 6.dp)) {
+fun ScreenHeader(title: String, state: DeviceState, navInset: Dp = 0.dp) {
+    Column(Modifier.fillMaxWidth().padding(start = 16.dp + navInset, top = 14.dp, end = 16.dp, bottom = 6.dp)) {
         Text(
             title,
             style = MaterialTheme.typography.headlineSmall,

@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.Save
@@ -90,6 +91,7 @@ import com.sloop.go.device.Link
 import com.sloop.go.device.PNote
 import com.sloop.go.device.decodeNotes
 import com.sloop.go.device.noteKey
+import com.sloop.go.device.resizeDeltaBounds
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -132,7 +134,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     var sel by remember(state.selectedTrack) { mutableIntStateOf(0) }
     val selected = sel.coerceIn(0, state.patternLength - 1)
     var selectMode by remember(state.selectedTrack) { mutableStateOf(false) }
-    var noteSel by remember(state.selectedTrack, selectMode) { mutableStateOf<Set<Int>>(emptySet()) }
+    var noteSel by remember(state.selectedTrack) { mutableStateOf<Set<Int>>(emptySet()) }
     var browser by remember { mutableStateOf<BrowserMode?>(null) }
     var carry by remember { mutableStateOf<Carry?>(null) }
     val kind = if (state.drumGrid) ClipKind.DRUM else ClipKind.PIANO
@@ -201,9 +203,13 @@ private fun ControlPanel(
             Icon(icon, contentDescription = label, modifier = Modifier.size(20.dp))
         }
     }
-    // One scrolling row of function blocks: track | sound | mode | edit | key | pattern files | step | status
+    // One fixed row of function blocks: track | sound | mode | edit | key | pattern files | step. It never
+    // scrolls: SpaceEvenly spreads the controls across the whole width, and conditional controls keep their
+    // slots so appearing ones (SEND, the selection trash) don't move the neighbours.
+    // The status is pinned at the right edge outside the row so queue/draft text never shifts the controls.
+    val statusW = 240.dp
     BoxWithConstraints(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
-    Row(Modifier.horizontalScroll(rememberScrollState()).widthIn(min = maxWidth).padding(horizontal = 4.dp),
+    Row(Modifier.fillMaxWidth().clipToBounds().padding(start = 4.dp, end = statusW + 4.dp),
         horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
         nav()
         TrackSelect(vm, state)
@@ -219,9 +225,8 @@ private fun ControlPanel(
         Spacer(Modifier.width(4.dp))
         FilterChip(selected = late, onClick = { vm.controller.setSequencerMode(SequencerMode.LATE) },
             label = { Text("Store") })
-        if (late) {
-            Spacer(Modifier.width(4.dp))
-            Button(onClick = { vm.controller.sendCurrentPattern() }, modifier = Modifier.height(30.dp),
+        Box(Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+            if (late) Button(onClick = { vm.controller.sendCurrentPattern() }, modifier = Modifier.height(30.dp),
                 contentPadding = tight) { Text("SEND") }
         }
         sep()
@@ -229,14 +234,15 @@ private fun ControlPanel(
         mini(Icons.Filled.FitScreen, "Fit to screen", onFit)
         sep()
         if (!state.drumGrid) {
-            TextButton(onClick = { vm.controller.transposeNotes(-12) }, modifier = btn, contentPadding = tight) { Text("-12") }
-            TextButton(onClick = { vm.controller.transposeNotes(12) }, modifier = btn, contentPadding = tight) { Text("+12") }
+            TextButton(onClick = { vm.controller.transposeNotes(-12); onFit() }, modifier = btn, contentPadding = tight) { Text("-12") }
+            TextButton(onClick = { vm.controller.transposeNotes(12); onFit() }, modifier = btn, contentPadding = tight) { Text("+12") }
         }
         FilledTonalIconToggleButton(checked = selectMode, onCheckedChange = onSelectMode, modifier = Modifier.size(32.dp)) {
             Icon(Icons.Filled.HighlightAlt, contentDescription = "Select mode", modifier = Modifier.size(20.dp))
         }
-        if (selectMode && selCount > 0) TextButton(onClick = onDeleteSel, modifier = btn,
-            contentPadding = tight) { Text("Delete $selCount") }
+        IconButton(onClick = onDeleteSel, enabled = selCount > 0, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Filled.Delete, contentDescription = "Delete selected", modifier = Modifier.size(20.dp))
+        }
         sep()
         mini(Icons.Filled.Save, "Save pattern", onSave)
         mini(Icons.Filled.FolderOpen, "Load pattern", onLoad)
@@ -244,17 +250,19 @@ private fun ControlPanel(
             sep()
             TextButton(onClick = onOptions, modifier = btn, contentPadding = tight) { Text(optionsLabel) }
         }
-        sep()
-        val parts = buildList {
-            add("LEN ${state.patternLength}")
-            if (late && state.draftTracks.isNotEmpty()) add("drafts ${state.draftTracks.sorted().joinToString(",") { "${it + 1}" }}")
-            if (state.queuedEdits > 0) add("queue ${state.queuedEdits}")
-        }
-        Text(state.queueError ?: parts.joinToString(" · "), Modifier.padding(horizontal = 6.dp),
-            color = if (state.queueError != null) MaterialTheme.colorScheme.error
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
+    val parts = buildList {
+        add("LEN ${state.patternLength}")
+        if (late && state.draftTracks.isNotEmpty()) add("drafts ${state.draftTracks.sorted().joinToString(",") { "${it + 1}" }}")
+        if (state.queuedEdits > 0) add("queue ${state.queuedEdits}")
+    }
+    Text(state.queueError ?: parts.joinToString(" · "),
+        Modifier.align(Alignment.CenterEnd).widthIn(min = statusW, max = maxWidth)
+            .background(MaterialTheme.colorScheme.surface).padding(horizontal = 6.dp),
+        color = if (state.queueError != null) MaterialTheme.colorScheme.error
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.labelSmall, maxLines = 1,
+        overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End)
     }
     if (confirmSwitch) AlertDialog(
         onDismissRequest = { confirmSwitch = false },
@@ -329,7 +337,7 @@ private fun TrackSelect(vm: SloopViewModel, state: DeviceState) {
     val info = state.info ?: return
     var open by remember { mutableStateOf(false) }
     Box {
-        Text("TRACK ${state.selectedTrack + 1} ▾",
+        Text("T${state.selectedTrack + 1} ▾",
             Modifier.clickable { open = true }.padding(horizontal = 8.dp, vertical = 10.dp),
             color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.SemiBold)
@@ -738,6 +746,9 @@ private class NoteHit(val start: Int, val note: Int, val len: Int, val edge: Int
 /** The selected notes being carried (or, with [copy], a clone of them), as grid cells from the grab point. */
 private class GroupDrag(val grabStep: Int, val grabRow: Int, val copy: Boolean, val dStep: Int = 0, val dPitch: Int = 0)
 
+/** The selected notes being stretched together through one grabbed [edge] (1 = right, -1 = left). */
+private class GroupResize(val edge: Int, val grabStep: Int, val delta: Int = 0)
+
 /** The select frame, in grid units (steps across, rows down) so it stays put while the grid scrolls. */
 private class Marquee(val x0: Float, val y0: Float, val x1: Float, val y1: Float) {
     fun hits(n: PNote): Boolean {
@@ -775,12 +786,13 @@ private fun PianoRoll(
     val rows = TOP_NOTE + 1
     val d = LocalDensity.current.density
     val vp = remember(state.selectedTrack) { Viewport() }
-    vp.d = d; vp.lw = 44f * d; vp.hdr = 26f * d; vp.cols = length; vp.rows = rows; vp.selectMode = selectMode
+    vp.d = d; vp.lw = 44f * d; vp.hdr = 26f * d; vp.cols = length; vp.rows = rows
     val painter = rememberPainter()
     val cs = MaterialTheme.colorScheme
     var ndrag by remember(state.selectedTrack) { mutableStateOf<NoteDrag?>(null) }
     var lastLen by remember(state.selectedTrack) { mutableIntStateOf(1) }
     var gdrag by remember(state.selectedTrack, selectMode) { mutableStateOf<GroupDrag?>(null) }
+    var gresize by remember(state.selectedTrack, selectMode) { mutableStateOf<GroupResize?>(null) }
     var marquee by remember(state.selectedTrack, selectMode) { mutableStateOf<Marquee?>(null) }
     val onSelNow by rememberUpdatedState(onNoteSel)
     val live = remember { object { var v: Set<Int> = noteSel } }   // the selection as the gesture sees it, ahead of recomposition
@@ -788,6 +800,7 @@ private fun PianoRoll(
     fun setSel(s: Set<Int>) { live.v = s; onSelNow(s) }
     val haptic = LocalHapticFeedback.current
     var origin by remember { mutableStateOf(Offset.Zero) }
+    vp.selectMode = selectMode || noteSel.isNotEmpty() || marquee != null || gdrag != null || gresize != null
 
     /** The cell shift (steps, semitones) that puts the carried pattern's centre under the finger; null off the roll. */
     fun carryShift(c: Carry): Pair<Int, Int>? {
@@ -825,7 +838,7 @@ private fun PianoRoll(
         }
         if (lo > hi) { lo = 48 - 12; hi = 48 + 12 }      // no notes: C3 +- one octave
         else if (lo == hi) { lo -= 12; hi += 12 }        // single pitch: octave up/down around it
-        lo -= 1; hi += 1                                 // one-row gap above and below
+        lo -= 2; hi += 2                                 // two-row gap above and below
         val span = (hi - lo + 1).toFloat()
         vp.rh = ((vp.h - vp.hdr) / span).coerceIn(8f * d, 44f * d)
         val midRow = (2 * TOP_NOTE - hi - lo + 1) / 2f
@@ -859,12 +872,18 @@ private fun PianoRoll(
                 }
                 return null
             }
+            /** Selection gestures apply in select mode and whenever a quick selection is alive. */
+            fun selOn() = selectMode || live.v.isNotEmpty()
+            fun frameAt(p: Offset) = Marquee((p.x - vp.lw + vp.sx) / vp.cw, (p.y - vp.hdr + vp.sy) / vp.rh,
+                (p.x - vp.lw + vp.sx) / vp.cw, (p.y - vp.hdr + vp.sy) / vp.rh)
+            fun ratcheted(n: PNote) =
+                vm.controller.state.value.steps.getOrNull(n.start)?.rat?.let { it != 0 } == true
             override fun tap(p: Offset) {
                 if (p.x < vp.lw || p.y < vp.hdr) {
                     if (p.y < vp.hdr && p.x >= vp.lw) vp.stepAt(p.x).takeIf { it in 0 until length }?.let(onSelect)
                     return
                 }
-                if (selectMode) {                       // tap a note: toggle it in the selection; empty: deselect all
+                if (selOn()) {                          // tap a note: toggle it in the selection; empty: deselect all
                     val h = hit(p)
                     if (h == null) { if (live.v.isNotEmpty()) setSel(emptySet()) }
                     else {
@@ -884,24 +903,35 @@ private fun PianoRoll(
                 vm.controller.toggleNote(at, note, lastLen)
             }
             override fun longPress(p: Offset): Boolean {
-                if (!selectMode) return false
-                val h = hit(p) ?: return false          // hold a note: take a copy of the selection and carry it
-                val k = noteKey(h.note, h.start)
+                if (p.x < vp.lw || p.y < vp.hdr) return false
+                val h = hit(p)
+                if (h == null) {                        // hold on empty grid: quick rectangle select, no toggle needed
+                    marquee = frameAt(p)
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    return true
+                }
+                if (!selOn()) return false              // hold a note with no selection alive: nothing
+                val k = noteKey(h.note, h.start)        // hold a note: take a copy of the selection and carry it
                 if (k !in live.v) setSel(setOf(k))
                 gdrag = GroupDrag(vp.stepAt(p.x), vp.rowAt(p.y), true)
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 return true
             }
             override fun grab(p: Offset): Boolean {
-                if (selectMode) return false            // no resize handles while selecting
                 val h = hit(p)?.takeIf { it.edge != 0 } ?: return false
+                if (selOn()) {                          // pull a selected note's edge: stretch them all together
+                    val k = noteKey(h.note, h.start)
+                    if (k !in live.v) setSel(setOf(k))
+                    gresize = GroupResize(h.edge, vp.stepAt(p.x))
+                    return true
+                }
                 onSelect(h.start)
                 ndrag = NoteDrag(false, h.start, h.note, h.len, h.start, h.start, h.note,
                     h.start + h.len - 1, h.edge)
                 return true
             }
             override fun beginMove(p: Offset): Boolean {
-                if (selectMode) {
+                if (selOn()) {
                     if (p.x < vp.lw || p.y < vp.hdr) return false
                     val h = hit(p)
                     if (h != null) {                    // drag a note: carry the selection (a loose note becomes it)
@@ -909,9 +939,7 @@ private fun PianoRoll(
                         if (k !in live.v) setSel(setOf(k))
                         gdrag = GroupDrag(vp.stepAt(p.x), vp.rowAt(p.y), false)
                     } else {                            // drag on empty grid: select frame
-                        val fx = (p.x - vp.lw + vp.sx) / vp.cw
-                        val fy = (p.y - vp.hdr + vp.sy) / vp.rh
-                        marquee = Marquee(fx, fy, fx, fy)
+                        marquee = frameAt(p)
                     }
                     return true
                 }
@@ -923,22 +951,28 @@ private fun PianoRoll(
                 return true
             }
             override fun drag(p: Offset) {
-                if (selectMode) {
-                    gdrag?.let { g -> gdrag = GroupDrag(g.grabStep, g.grabRow, g.copy,
-                        vp.stepAt(p.x) - g.grabStep, -(vp.rowAt(p.y) - g.grabRow)) }
-                    marquee?.let { m -> marquee = Marquee(m.x0, m.y0,
-                        (p.x - vp.lw + vp.sx) / vp.cw, (p.y - vp.hdr + vp.sy) / vp.rh) }
-                    return
+                val g = gdrag
+                val m = marquee
+                val r = gresize
+                when {
+                    g != null -> gdrag = GroupDrag(g.grabStep, g.grabRow, g.copy,
+                        vp.stepAt(p.x) - g.grabStep, -(vp.rowAt(p.y) - g.grabRow))
+                    m != null -> marquee = Marquee(m.x0, m.y0,
+                        (p.x - vp.lw + vp.sx) / vp.cw, (p.y - vp.hdr + vp.sy) / vp.rh)
+                    r != null -> gresize = GroupResize(r.edge, r.grabStep, vp.stepAt(p.x) - r.grabStep)
+                    selOn() -> {}
+                    else -> {
+                        val dr = ndrag ?: return
+                        ndrag = if (dr.move) dr.copy(
+                            toStep = (dr.start + vp.stepAt(p.x) - dr.grabStep).coerceIn(0, length - dr.len),
+                            toNote = noteAtRow(p.y).coerceIn(0, TOP_NOTE))
+                        else if (dr.edge > 0) dr.copy(end = vp.stepAt(p.x).coerceIn(dr.start, length - 1))
+                        else dr.copy(toStep = vp.stepAt(p.x).coerceIn(0, dr.start + dr.len - 1))
+                    }
                 }
-                val dr = ndrag ?: return
-                ndrag = if (dr.move) dr.copy(
-                    toStep = (dr.start + vp.stepAt(p.x) - dr.grabStep).coerceIn(0, length - dr.len),
-                    toNote = noteAtRow(p.y).coerceIn(0, TOP_NOTE))
-                else if (dr.edge > 0) dr.copy(end = vp.stepAt(p.x).coerceIn(dr.start, length - 1))
-                else dr.copy(toStep = vp.stepAt(p.x).coerceIn(0, dr.start + dr.len - 1))
             }
             override fun release(p: Offset) {
-                if (selectMode) {
+                if (gdrag != null || marquee != null || gresize != null) {
                     drag(p)
                     gdrag?.let { g ->
                         val sel = allNotes().filter { noteKey(it.pitch, it.start) in live.v }
@@ -948,8 +982,18 @@ private fun PianoRoll(
                             if (ds != 0 || dp != 0) setSel(sel.map { noteKey(it.pitch + dp, it.start + ds) }.toSet())
                         }
                     }
+                    gresize?.let { g ->
+                        val sel = allNotes().filter { noteKey(it.pitch, it.start) in live.v }
+                        val others = allNotes().filter { noteKey(it.pitch, it.start) !in live.v }
+                        val (lo, hi) = resizeDeltaBounds(sel, others, length, g.edge, ::ratcheted)
+                        val d = if (lo <= hi) g.delta.coerceIn(lo, hi) else 0
+                        if (d != 0) {
+                            vm.controller.resizeNotes(live.v, g.edge, g.delta)
+                            if (g.edge < 0) setSel(sel.map { noteKey(it.pitch, it.start + d) }.toSet())
+                        }
+                    }
                     marquee?.let { m -> setSel(allNotes().filter { m.hits(it) }.map { noteKey(it.pitch, it.start) }.toSet()) }
-                    gdrag = null; marquee = null
+                    gdrag = null; marquee = null; gresize = null
                     return
                 }
                 val dr = ndrag ?: return
@@ -968,7 +1012,7 @@ private fun PianoRoll(
                 } else if (fin.toStep != fin.start)
                     vm.controller.adjustNoteStart(fin.start, fin.note, fin.toStep - fin.start)
             }
-            override fun cancel() { ndrag = null; gdrag = null; marquee = null }
+            override fun cancel() { ndrag = null; gdrag = null; gresize = null; marquee = null }
         }
     }
 
@@ -1001,27 +1045,25 @@ private fun PianoRoll(
                     if (c % 4 == 0) 1.5f * d else 1f * d)
             }
             val all = decodeNotes(steps, length)
-            val picked = if (selectMode) all.filter { noteKey(it.pitch, it.start) in noteSel } else emptyList()
-            val lifted = gdrag?.takeIf { !it.copy }
+            val picked = if (noteSel.isNotEmpty()) all.filter { noteKey(it.pitch, it.start) in noteSel } else emptyList()
+            val dimmed = (gdrag != null && gdrag?.copy == false) || gresize != null
             for (n in all) {
                 val r = TOP_NOTE - n.pitch
                 if (r !in r0..r1 || n.end < c0 || n.start > c1) continue
                 val x = colX(n.start)
-                val isSel = selectMode && (n in picked || marquee?.hits(n) == true)
+                val isSel = n in picked || marquee?.hits(n) == true
                 val body = if (isSel) cs.tertiary else cs.primary
-                drawRoundRect(if (lifted != null && n in picked) body.copy(alpha = 0.3f) else body,
+                drawRoundRect(if (dimmed && n in picked) body.copy(alpha = 0.3f) else body,
                     Offset(x + 1.5f * d, rowY(r) + 2f * d), Size(n.len * cw - 3f * d, rh - 4f * d), radius)
                 if (isSel) drawRoundRect(cs.onTertiary.copy(alpha = 0.9f),
                     Offset(x + 1.5f * d, rowY(r) + 2f * d), Size(n.len * cw - 3f * d, rh - 4f * d), radius,
                     style = Stroke(1.5f * d))
-                if (!selectMode) {                       // resize handles; select mode has none
-                    drawRoundRect(cs.onPrimary.copy(alpha = 0.7f),
-                        Offset(x + n.len * cw - 8f * d, rowY(r) + rh * 0.28f),
-                        Size(3f * d, rh * 0.44f), CornerRadius(1.5f * d))
-                    if (n.len > 1) drawRoundRect(cs.onPrimary.copy(alpha = 0.7f),
-                        Offset(x + 5f * d, rowY(r) + rh * 0.28f),
-                        Size(3f * d, rh * 0.44f), CornerRadius(1.5f * d))
-                }
+                val handle = (if (isSel) cs.onTertiary else cs.onPrimary).copy(alpha = 0.7f)
+                drawRoundRect(handle, Offset(x + n.len * cw - 8f * d, rowY(r) + rh * 0.28f),
+                    Size(3f * d, rh * 0.44f), CornerRadius(1.5f * d))
+                if (n.len > 1) drawRoundRect(handle,
+                    Offset(x + 5f * d, rowY(r) + rh * 0.28f),
+                    Size(3f * d, rh * 0.44f), CornerRadius(1.5f * d))
             }
             gdrag?.let { g ->                            // the carried group (or its clone) where it would land
                 val (ds, dp) = clampShift(picked, length, g.dStep, g.dPitch)
@@ -1032,6 +1074,22 @@ private fun PianoRoll(
                         Size(n.len * cw - 3f * d, rh - 4f * d), radius)
                     drawRoundRect(cs.onTertiary, Offset(colX(n.start + ds) + 1.5f * d, rowY(gr) + 2f * d),
                         Size(n.len * cw - 3f * d, rh - 4f * d), radius, style = Stroke(1.5f * d))
+                }
+            }
+            gresize?.let { g ->                          // the stretched group where it would land
+                val others = all.filter { noteKey(it.pitch, it.start) !in noteSel }
+                val (lo, hi) = resizeDeltaBounds(picked, others, length, g.edge) { n ->
+                    steps.getOrNull(n.start)?.rat?.let { it != 0 } == true }
+                val dd = if (lo <= hi) g.delta.coerceIn(lo, hi) else 0
+                if (dd != 0) for (n in picked) {
+                    val ns = if (g.edge > 0) n.start else n.start + dd
+                    val nl = if (g.edge > 0) n.len + dd else n.len - dd
+                    drawRoundRect(cs.tertiary.copy(alpha = 0.75f),
+                        Offset(colX(ns) + 1.5f * d, rowY(TOP_NOTE - n.pitch) + 2f * d),
+                        Size(nl * cw - 3f * d, rh - 4f * d), radius)
+                    drawRoundRect(cs.onTertiary,
+                        Offset(colX(ns) + 1.5f * d, rowY(TOP_NOTE - n.pitch) + 2f * d),
+                        Size(nl * cw - 3f * d, rh - 4f * d), radius, style = Stroke(1.5f * d))
                 }
             }
             carry?.let { c ->                            // a saved pattern carried over the roll, where it would land

@@ -35,7 +35,7 @@ fun ConnectScreen(vm: SloopViewModel, state: DeviceState) {
     }
 
     LazyColumn(Modifier.fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 104.dp)) {
-        item { ScreenHeader("Device", state) }
+        item { ScreenHeader("Device", state, NAV_INSET) }
         item { Text("Sloop Go $version", Modifier.padding(horizontal = 16.dp),
             style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         if (state.queueError != null && state.link == Link.READY) {
@@ -128,9 +128,10 @@ fun ConnectScreen(vm: SloopViewModel, state: DeviceState) {
             Card(Modifier.fillMaxWidth().padding(16.dp, 12.dp)) {
                 Column(Modifier.padding(16.dp)) {
                     Text("About", style = MaterialTheme.typography.titleMedium)
-                    Text("Sloop Go is free software (GPL-3.0). It is a companion app for the SLOOP firmware " +
+                    Text("Sloop Go is free software (GPL-3.0). It is a companion app by jahlib for the SLOOP firmware " +
                         "by isod89 (github.com/isod89/sloop-fm1) and builds on Felucca by Leo Kuroshita / " +
-                        "Hügelton Instruments (github.com/hugelton/Felucca). It is not affiliated with them.",
+                        "Hügelton Instruments (github.com/hugelton/Felucca). It is not affiliated with them." +
+                        "Have fun and make some bangers!",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
