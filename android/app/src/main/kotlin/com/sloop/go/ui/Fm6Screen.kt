@@ -197,9 +197,11 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
             }
         }
 
-        // ---- target: which track plays / receives the patch
-        item(key = "track", span = StaggeredGridItemSpan.FullLine) {
-            Card(Modifier.fillMaxWidth()) {
+        // ---- target and slots side by side, the track card a bit narrower
+        item(key = "trackSlots", span = StaggeredGridItemSpan.FullLine) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Top) {
+            Card(Modifier.weight(0.45f)) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Track", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -235,11 +237,8 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                     }
                 }
             }
-        }
 
-        // ---- the device's patch slots: F1..F8 factory, B1..B27 bank
-        item(key = "slots", span = StaggeredGridItemSpan.FullLine) {
-            Card(Modifier.fillMaxWidth()) {
+            Card(Modifier.weight(0.55f)) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Slots", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     var open by remember { mutableStateOf(false) }
@@ -302,6 +301,7 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                         "\"Use on track\" sets the track's PTCH to the slot, as choosing it on the FM-1.",
                         style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                 }
+            }
             }
         }
 
@@ -369,23 +369,33 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
             }
         }
 
-        // ---- the voice: name, algorithm, LFO and the pitch envelope
-        item(key = "voice") {
-            Fm6Block("VOICE") {
-                OutlinedTextField(
-                    value = Fm6.name(v), onValueChange = { ed.rename(it) }, singleLine = true,
-                    label = { Text("Name (10 characters)") },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp))
-                Fm6Knobs(listOf(
-                    Fm6Ctl("ALG", Fm6.ALG, Fmt.ENUM, List(32) { "${it + 1}" }),
-                    Fm6Ctl("FB", Fm6.FB),
-                    Fm6Ctl("TRNSP", Fm6.TRNSP),
-                    Fm6Ctl("OKS", Fm6.OKS, Fmt.ONOFF),
-                ), v, defs, ed)
-                Text("Carriers: " + carriers.joinToString(" ") { "OP$it" } +
-                    " · feedback: OP${Fm6.feedbackOp(v[Fm6.ALG]) ?: "-"}",
-                    Modifier.padding(horizontal = 14.dp),
-                    style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+        // ---- the voice in one wide row: name on the left, its four knobs on the right
+        item(key = "voice", span = StaggeredGridItemSpan.FullLine) {
+            Card(Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
+                        Text("VOICE", Modifier.padding(start = 14.dp, top = 6.dp, bottom = 2.dp),
+                            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        OutlinedTextField(
+                            value = Fm6.name(v), onValueChange = { ed.rename(it) }, singleLine = true,
+                            label = { Text("Name (10 characters)") },
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp))
+                        Text("Carriers: " + carriers.joinToString(" ") { "OP$it" } +
+                            " · feedback: OP${Fm6.feedbackOp(v[Fm6.ALG]) ?: "-"}",
+                            Modifier.padding(start = 14.dp, top = 4.dp),
+                            style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                    }
+                    Row(Modifier.weight(1f).padding(end = 8.dp)) {
+                        listOf(
+                            Fm6Ctl("ALG", Fm6.ALG, Fmt.ENUM, List(32) { "${it + 1}" }),
+                            Fm6Ctl("FB", Fm6.FB),
+                            Fm6Ctl("TRNSP", Fm6.TRNSP),
+                            Fm6Ctl("OKS", Fm6.OKS, Fmt.ONOFF),
+                        ).forEach { c ->
+                            Box(Modifier.weight(1f)) { ParamControl(c.desc(defs[c.i]), v[c.i]) { ed.set(c.i, it) } }
+                        }
+                    }
+                }
             }
         }
         item(key = "lfo") {
@@ -407,32 +417,11 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
             }
         }
 
-        // ---- the six operators
-        for (n in 1..Fm6.OPS) item(key = "op$n") {
-            fun f(name: String) = Fm6.at(n, name)
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(vertical = 4.dp)) {
-                    Row(Modifier.fillMaxWidth().padding(start = 14.dp, top = 6.dp, end = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Text("OP$n" + if (n in carriers) " ●" else "", style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold, color = if (n in carriers) cs.primary else cs.onSurface,
-                            modifier = Modifier.weight(1f))
-                        Text(Fm6.freqText(v, n), style = MaterialTheme.typography.labelMedium,
-                            fontFamily = SloopFontFamily, color = cs.onSurfaceVariant)
-                    }
-                    EgPreview(IntArray(4) { v[f("R${it + 1}")] }, IntArray(4) { v[f("L${it + 1}")] },
-                        Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 8.dp))
-                    Fm6Knobs(listOf(
-                        Fm6Ctl("R1", f("R1")), Fm6Ctl("R2", f("R2")), Fm6Ctl("R3", f("R3")), Fm6Ctl("R4", f("R4")),
-                        Fm6Ctl("L1", f("L1")), Fm6Ctl("L2", f("L2")), Fm6Ctl("L3", f("L3")), Fm6Ctl("L4", f("L4")),
-                        Fm6Ctl("BP", f("BP")), Fm6Ctl("LD", f("LD")), Fm6Ctl("RD", f("RD")), Fm6Ctl("RS", f("RS")),
-                        Fm6Ctl("LC", f("LC"), Fmt.ENUM, Fm6.CURVES), Fm6Ctl("RC", f("RC"), Fmt.ENUM, Fm6.CURVES),
-                        Fm6Ctl("AMS", f("AMS")), Fm6Ctl("KVS", f("KVS")),
-                        Fm6Ctl("OL", f("OL")), Fm6Ctl("MODE", f("MODE"), Fmt.ENUM, listOf("RATIO", "FIXED")),
-                        Fm6Ctl("FC", f("FC")), Fm6Ctl("FF", f("FF")),
-                        Fm6Ctl("DET", f("DET")),
-                    ), v, defs, ed)
-                }
+        // ---- the six operators in order: OP1 OP2 / OP3 OP4 / OP5 OP6, two equal cards a row
+        for (pair in 0 until Fm6.OPS / 2) item(key = "opRow${pair * 2 + 1}", span = StaggeredGridItemSpan.FullLine) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Fm6OpCard(pair * 2 + 1, v, defs, ed, carriers, Modifier.weight(1f))
+                Fm6OpCard(pair * 2 + 2, v, defs, ed, carriers, Modifier.weight(1f))
             }
         }
 
@@ -473,6 +462,37 @@ private fun Fm6Block(title: String, content: @Composable () -> Unit) {
             Text(title, Modifier.padding(start = 14.dp, top = 6.dp, bottom = 2.dp),
                 style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             content()
+        }
+    }
+}
+
+/** One operator's card; the six sit in three fixed two-column rows so they line up exactly. */
+@Composable
+private fun Fm6OpCard(n: Int, v: IntArray, defs: IntArray, ed: Fm6Editor, carriers: List<Int>, modifier: Modifier) {
+    val cs = MaterialTheme.colorScheme
+    fun f(name: String) = Fm6.at(n, name)
+    Card(modifier) {
+        Column(Modifier.padding(vertical = 4.dp)) {
+            Row(Modifier.fillMaxWidth().padding(start = 14.dp, top = 6.dp, end = 14.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text("OP$n" + if (n in carriers) " ●" else "", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold, color = if (n in carriers) cs.primary else cs.onSurface,
+                    modifier = Modifier.weight(1f))
+                Text(Fm6.freqText(v, n), style = MaterialTheme.typography.labelMedium,
+                    fontFamily = SloopFontFamily, color = cs.onSurfaceVariant)
+            }
+            EgPreview(IntArray(4) { v[f("R${it + 1}")] }, IntArray(4) { v[f("L${it + 1}")] },
+                Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 8.dp))
+            Fm6Knobs(listOf(
+                Fm6Ctl("R1", f("R1")), Fm6Ctl("R2", f("R2")), Fm6Ctl("R3", f("R3")), Fm6Ctl("R4", f("R4")),
+                Fm6Ctl("L1", f("L1")), Fm6Ctl("L2", f("L2")), Fm6Ctl("L3", f("L3")), Fm6Ctl("L4", f("L4")),
+                Fm6Ctl("BP", f("BP")), Fm6Ctl("LD", f("LD")), Fm6Ctl("RD", f("RD")), Fm6Ctl("RS", f("RS")),
+                Fm6Ctl("LC", f("LC"), Fmt.ENUM, Fm6.CURVES), Fm6Ctl("RC", f("RC"), Fmt.ENUM, Fm6.CURVES),
+                Fm6Ctl("AMS", f("AMS")), Fm6Ctl("KVS", f("KVS")),
+                Fm6Ctl("OL", f("OL")), Fm6Ctl("MODE", f("MODE"), Fmt.ENUM, listOf("RATIO", "FIXED")),
+                Fm6Ctl("FC", f("FC")), Fm6Ctl("FF", f("FF")),
+                Fm6Ctl("DET", f("DET")),
+            ), v, defs, ed)
         }
     }
 }
