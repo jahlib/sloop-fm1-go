@@ -28,7 +28,10 @@ so edits reach the FM-1 immediately.
 - **Sound** — all sound parameters in collapsible blocks with touch knobs, engine / kit and preset pickers, track selector.
 - **Sequencer** — drum grid and synth piano-roll with pinch zoom, Live / Store (draft) modes, voice modes, step nudge /
   fill / parameter locks (SLOOP 2.4); piano-roll **Select** mode (frame-select, drag the whole figure, hold to clone it,
-  existing notes win on overlap), ±12 transpose and 12 ready drum patterns with previews.
+  existing notes win on overlap), ±12 transpose; **Save / Load** of note patterns as MIDI files kept inside the app
+  (separate piano-roll and drum lists with previews; tap to load, or hold one and drag it onto the piano roll; 12 ready
+  drum and 12 ready piano patterns included). Only the notes are stored, never the sound or knob positions. A **MIDI
+  patterns** page renames, deletes and loads them onto any track.
 - **FM6 patches** (SLOOP 2.4) — slot library, DX7 SysEx import / export from phone storage, upload to the bank or to a
   track, and a full six-operator editor.
 - **Samples** (SLOOP 2.4) — USR1–4 user sample slots. Load audio files from phone storage **or record straight from

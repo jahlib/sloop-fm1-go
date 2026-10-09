@@ -342,22 +342,30 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                                     label = { Text("${k + 1} ${x.name.ifBlank { "—" }}", maxLines = 1) })
                             }
                         }
-                        val startBank = (slot - nf).coerceAtLeast(0)
-                        val count = minOf(ed.imported.size, nb - startBank)
+                        val count = minOf(ed.imported.size, nb)
                         Button(enabled = !ed.busy && count > 0, onClick = {
-                            confirm = Triple("Upload to the bank?",
-                                "$count voice(s) will be written to B${startBank + 1}–B${startBank + count}, " +
-                                    "replacing what is there. Stop the device first.") {
+                            confirm = Triple("Store cartridge in the bank?",
+                                "$count voice(s) will be written to B1–B$count in one flash write, replacing what is there " +
+                                    "(the rest of the bank stays). Stop the device first.") {
                                 op {
-                                    for (k in 0 until count) {
-                                        ed.say("Uploading ${k + 1}/$count: ${ed.imported[k].name}")
-                                        val rc = ctl.fm6Put(1, startBank + k, Fm6.pack(ed.imported[k].v))
-                                        if (rc != 0) { ed.say("B${startBank + k + 1}: " + rcText(rc), true); return@op }
+                                    ed.say("Writing $count voice(s)…")
+                                    val packs = List(count) { Fm6.pack(ed.imported[it].v) }
+                                    when (val rc = ctl.fm6StoreCartridge(packs)) {
+                                        0 -> ed.say("Stored $count voice(s) in B1–B$count")
+                                        3 -> ed.say(rcText(3), true)
+                                        -1 -> {
+                                            for (k in 0 until count) {
+                                                ed.say("Uploading ${k + 1}/$count: ${ed.imported[k].name}")
+                                                val r2 = ctl.fm6Put(1, k, packs[k])
+                                                if (r2 != 0) { ed.say("B${k + 1}: " + rcText(r2), true); return@op }
+                                            }
+                                            ed.say("Uploaded $count voice(s) to B1–B$count")
+                                        }
+                                        else -> ed.say(rcText(rc), true)
                                     }
-                                    ed.say("Uploaded $count voice(s) to B${startBank + 1}–B${startBank + count}")
                                 }
                             }
-                        }) { Text("Upload all to bank from ${slotName(nf + startBank)}") }
+                        }) { Text("Store cartridge in bank (B1–B$count)") }
                     }
                 }
             }

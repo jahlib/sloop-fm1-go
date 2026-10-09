@@ -26,7 +26,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Equalizer
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.LibraryMusic
@@ -34,6 +36,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
@@ -77,6 +80,9 @@ private enum class Tab(val title: String, val icon: ImageVector) {
     SEQ("Sequencer", Icons.Filled.GridView),
     FM6("FM6 patches", Icons.Filled.GraphicEq),
     SAMPLES("Samples", Icons.Filled.LibraryMusic),
+    DRUMSYNTH("Drum synth", Icons.Filled.Album),
+    SONG("Song", Icons.Filled.Timeline),
+    MIDI("MIDI patterns", Icons.Filled.FolderOpen),
     MIX("Mixer", Icons.Filled.Equalizer),
     SETTINGS("Device", Icons.Filled.Settings),
 }
@@ -154,6 +160,9 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
                 })
                 Tab.FM6 -> Fm6Screen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.SAMPLES -> SamplesScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
+                Tab.DRUMSYNTH -> DrumSynthScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
+                Tab.SONG -> SongScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
+                Tab.MIDI -> MidiBrowserScreen(vm, state, openSequencer = { tab = Tab.SEQ })
                 Tab.MIX -> MixerScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.SETTINGS -> ConnectScreen(vm, state)
             }

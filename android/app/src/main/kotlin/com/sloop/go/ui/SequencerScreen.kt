@@ -57,7 +57,9 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -81,6 +83,7 @@ import com.sloop.go.device.SequencerMode
 import com.sloop.go.proto.DrumStep
 import com.sloop.go.proto.Step
 import com.sloop.go.proto.StepTime
+import com.sloop.go.store.ClipKind
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -115,15 +118,31 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     val selected = sel.coerceIn(0, state.patternLength - 1)
     var selectMode by remember(state.selectedTrack) { mutableStateOf(false) }
     var noteSel by remember(state.selectedTrack, selectMode) { mutableStateOf<Set<Int>>(emptySet()) }
+    var browser by remember { mutableStateOf<BrowserMode?>(null) }
+    var carry by remember { mutableStateOf<Carry?>(null) }
+    val kind = if (state.drumGrid) ClipKind.DRUM else ClipKind.PIANO
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         ControlPanel(vm, state, nav, onPick = { picker = true }, onClear = { askClear = true }, onFit = { fitTick++ },
+            onSave = { browser = BrowserMode.SAVE }, onLoad = { browser = BrowserMode.LOAD },
             onOptions = if (state.drumGrid) null else { { options = true } }, optionsLabel = "Step ${selected + 1}",
             selectMode = selectMode, onSelectMode = { selectMode = it }, selCount = noteSel.size,
             onDeleteSel = { vm.controller.deleteNotes(noteSel); noteSel = emptySet() })
         if (state.drumGrid) DrumGrid(vm, state, fitTick, Modifier.weight(1f).fillMaxWidth())
         else PianoRoll(vm, state, fitTick, selected, { sel = it }, selectMode, noteSel, { noteSel = it },
-            Modifier.weight(1f).fillMaxWidth())
+            carry, { carry = null; browser = null }, Modifier.weight(1f).fillMaxWidth())
+    }
+    browser?.let { mode ->
+        ClipBrowserOverlay(vm, kind, mode, carrying = carry != null,
+            onDismiss = { browser = null; carry = null },
+            onLoad = { vm.controller.applyClip(it) },
+            carry = if (kind == ClipKind.PIANO) ClipDrag(
+                start = { clip, pos -> carry = Carry(clip).also { it.pos = pos } },
+                move = { carry?.pos = it },
+                end = { carry?.released = true },
+                cancel = { carry = null; browser = null }) else null)
+    }
     }
 
     if (picker) PresetPicker(vm, state) { picker = false }
@@ -150,6 +169,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
 @Composable
 private fun ControlPanel(
     vm: SloopViewModel, state: DeviceState, nav: @Composable () -> Unit, onPick: () -> Unit,
+    onSave: () -> Unit, onLoad: () -> Unit,
     onClear: () -> Unit, onFit: () -> Unit, onOptions: (() -> Unit)?, optionsLabel: String,
     selectMode: Boolean, onSelectMode: (Boolean) -> Unit, selCount: Int, onDeleteSel: () -> Unit,
 ) {
@@ -176,9 +196,7 @@ private fun ControlPanel(
                 modifier = Modifier.height(30.dp), contentPadding = tight) { Text("SEND") }
             TextButton(onClick = onClear, modifier = Modifier.height(32.dp), contentPadding = tight) { Text("Clear") }
             TextButton(onClick = onFit, modifier = Modifier.height(32.dp), contentPadding = tight) { Text("Fit") }
-            if (state.drumGrid) DrumPresetMenu { p ->
-                vm.controller.applyDrumPattern(p.masks(state.patternLength))
-            } else {
+            if (!state.drumGrid) {
                 TextButton(onClick = { vm.controller.transposeNotes(-12) },
                     modifier = Modifier.height(32.dp), contentPadding = tight) { Text("-12") }
                 TextButton(onClick = { vm.controller.transposeNotes(12) },
@@ -190,6 +208,11 @@ private fun ControlPanel(
             }
             if (onOptions != null) TextButton(onClick = onOptions, modifier = Modifier.height(32.dp),
                 contentPadding = tight) { Text(optionsLabel) }
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onSave, modifier = Modifier.height(32.dp), contentPadding = tight) { Text("Save") }
+            TextButton(onClick = onLoad, modifier = Modifier.height(32.dp), contentPadding = tight) { Text("Load") }
             val parts = buildList {
                 add("LEN ${state.patternLength}")
                 if (late && state.draftTracks.isNotEmpty()) add("drafts ${state.draftTracks.sorted().joinToString(",") { "${it + 1}" }}")
@@ -535,6 +558,7 @@ private fun DrumGrid(vm: SloopViewModel, state: DeviceState, fitTick: Int, modif
 
     Canvas(modifier.clipToBounds().background(cs.background)
         .onSizeChanged { vp.size = it; vp.clamp() }
+        .onGloballyPositioned { origin = it.positionInRoot() }
         .pointerInput(handler) { gridGestures(vp) { handler } }) {
         val cw = vp.cw; val rh = vp.rh; val sx = vp.sx; val sy = vp.sy; val lw = vp.lw; val hdr = vp.hdr
         val c0 = (sx / cw).toInt().coerceIn(0, length - 1)
@@ -612,7 +636,7 @@ private fun clampShift(sel: List<PNote>, length: Int, dStep: Int, dPitch: Int): 
 private fun PianoRoll(
     vm: SloopViewModel, state: DeviceState, fitTick: Int, selected: Int,
     onSelect: (Int) -> Unit, selectMode: Boolean, noteSel: Set<Int>, onNoteSel: (Set<Int>) -> Unit,
-    modifier: Modifier,
+    carry: Carry?, onCarryDone: () -> Unit, modifier: Modifier,
 ) {
     val length = state.patternLength
     val steps = state.steps
@@ -631,6 +655,24 @@ private fun PianoRoll(
     live.v = noteSel
     fun setSel(s: Set<Int>) { live.v = s; onSelNow(s) }
     val haptic = LocalHapticFeedback.current
+    var origin by remember { mutableStateOf(Offset.Zero) }
+
+    /** The cell shift (steps, semitones) that puts the carried pattern's centre under the finger; null off the roll. */
+    fun carryShift(c: Carry): Pair<Int, Int>? {
+        val p = c.pos - origin
+        if (p.x < vp.lw || p.y < vp.hdr || p.x > vp.size.width || p.y > vp.size.height) return null
+        val src = c.clip.notes.filter { it.start < length }
+        if (src.isEmpty()) return null
+        val cs0 = (src.minOf { it.start } + src.maxOf { minOf(it.start + it.len, length) - 1 }) / 2
+        val cp = (src.minOf { it.pitch } + src.maxOf { it.pitch }) / 2
+        return (vp.stepAt(p.x) - cs0) to ((TOP_NOTE - vp.rowAt(p.y)) - cp)
+    }
+    LaunchedEffect(carry?.released) {
+        val c = carry ?: return@LaunchedEffect
+        if (!c.released) return@LaunchedEffect
+        carryShift(c)?.let { (ds, dp) -> vm.controller.dropClip(c.clip, ds, dp) }
+        onCarryDone()
+    }
 
     LaunchedEffect(state.selectedTrack, length, vp.size.width > 0, fitTick) {
         if (vp.size.width == 0) return@LaunchedEffect
@@ -851,6 +893,20 @@ private fun PianoRoll(
             gdrag?.let { g ->                            // the carried group (or its clone) where it would land
                 val (ds, dp) = clampShift(picked, length, g.dStep, g.dPitch)
                 for (n in picked) {
+                    val gr = TOP_NOTE - (n.pitch + dp)
+                    drawRoundRect(cs.tertiary.copy(alpha = 0.75f),
+                        Offset(colX(n.start + ds) + 1.5f * d, rowY(gr) + 2f * d),
+                        Size(n.len * cw - 3f * d, rh - 4f * d), radius)
+                    drawRoundRect(cs.onTertiary, Offset(colX(n.start + ds) + 1.5f * d, rowY(gr) + 2f * d),
+                        Size(n.len * cw - 3f * d, rh - 4f * d), radius, style = Stroke(1.5f * d))
+                }
+            }
+            carry?.let { c ->                            // a saved pattern carried over the roll, where it would land
+                val sh = carryShift(c) ?: return@let
+                val src = c.clip.notes.filter { it.start < length }
+                    .map { PNote(it.start, minOf(it.len, length - it.start).coerceAtLeast(1), it.pitch.coerceIn(0, TOP_NOTE)) }
+                val (ds, dp) = clampShift(src, length, sh.first, sh.second)
+                for (n in src) {
                     val gr = TOP_NOTE - (n.pitch + dp)
                     drawRoundRect(cs.tertiary.copy(alpha = 0.75f),
                         Offset(colX(n.start + ds) + 1.5f * d, rowY(gr) + 2f * d),

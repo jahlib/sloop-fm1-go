@@ -310,4 +310,42 @@ object Parse {
         }
         return DrumStep(index, on, lvl, rat)
     }
+
+    /** DSYN_LIST reply: factory count, user count, stored, the factory names, then per user kit its name and source kit. */
+    fun dsynList(a: IntArray): DsynList {
+        val r = Reader(a)
+        val factory = r.b(); val user = r.b(); val stored = r.b() != 0
+        val names = List(factory) { r.s() }
+        return DsynList(factory, user, stored, names, List(user) { r.s() to r.b() })
+    }
+
+    /** DSYN_GET reply: which, rc, name, pack7(crush, src, 16 x 22 bytes). */
+    fun dsynGet(a: IntArray): DsynGot {
+        val r = Reader(a)
+        val which = r.b(); val rc = r.b()
+        if (rc != 0) return DsynGot(which, rc, null)
+        val name = r.s()
+        val d = Backup.unpack7(a, r.i)
+        if (d.size < 2 + Dsyn.LANES * Dsyn.SIZE) return DsynGot(which, 2, null)
+        val sounds = Array(Dsyn.LANES) { l -> d.copyOfRange(2 + l * Dsyn.SIZE, 2 + (l + 1) * Dsyn.SIZE) }
+        return DsynGot(which, 0, Dsyn.Kit(name, d[0].toInt() and 255, d[1].toInt() and 255, sounds))
+    }
+
+    /** DSYN_PUT / DSYN_PLAY reply: k, part (lane), rc. DSYN_STORE: rc alone. */
+    fun dsynRc(a: IntArray): Int = a.last()
+
+    fun bkList(a: IntArray): BkList {
+        val r = Reader(a)
+        val rc = r.b(); val n = r.b()
+        return BkList(rc, List(n) { BkItem(r.b(), Backup.u35(r).toInt(), Backup.u35(r)) })
+    }
+
+    fun bkGet(a: IntArray): BkGot {
+        val r = Reader(a)
+        val id = r.b(); val rc = r.b(); val off = Backup.u35(r)
+        r.b(); r.b()
+        return BkGot(id, rc, off, Backup.unpack7(a, r.i))
+    }
+
+    fun bkPut(a: IntArray): BkRc { val r = Reader(a); return BkRc(r.b(), r.b(), r.b()) }
 }

@@ -61,6 +61,9 @@ import com.sloop.go.proto.Desc
  */
 private data class Page(val title: String, val scope: Int, val ids: List<Int>, val trackIds: Set<Int> = emptySet())
 
+private const val P_STRUM = 51  // SLOOP 2.4: chord strum (ms per note) and voice leading, after TFLT
+private const val P_VLEAD = 52
+private const val G_DRDLY = 32  // SLOOP 2.5: the drums' delay send (absent on 2.4: gdesc has no entry)
 private const val P_TFLT = 50   // SLOOP 2.4: the track's filter; absent on older firmware (pe0 <= 50)
 private data class Group(val title: String, val pages: List<Page>)
 
@@ -89,10 +92,13 @@ private fun layout(pe0: Int): List<Group> = listOf(
         Page("DELAY", 1, listOf(4, 5, 6, 7)),
         Page("REVERB / CHORUS", 1, listOf(8, 9, 10, 11)),
     )),
-    Group("Scale", listOf(Page("SCALE", 0, listOf(25, 26, 27, 49)), Page("SCALE 2", 0, listOf(28)))),
+    Group("Scale", listOf(
+        Page("SEL", 0, listOf(25, 26, 27, 49)),
+        Page("SEL 2", 0, if (pe0 > P_VLEAD) listOf(28, P_STRUM, P_VLEAD) else listOf(28)),
+    )),
     Group("Arp", listOf(Page("ARP", 0, listOf(17, 18, 19, 20)), Page("ARP 2", 0, listOf(21, 22, 23, 24)))),
     Group("Pattern", listOf(Page("PATTERN", 0, listOf(29, 30, 31, 32)))),
-    Group("Drums", listOf(Page("DRUMS", 1, listOf(24, 25, 26)))),
+    Group("Drums", listOf(Page("DRUMS", 1, listOf(24, 25, 26, G_DRDLY)))),
 )
 
 @Composable

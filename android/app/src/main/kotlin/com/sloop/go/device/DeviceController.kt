@@ -8,10 +8,14 @@ import android.os.SystemClock
 import android.util.Log
 import com.sloop.go.midi.MidiConnection
 import com.sloop.go.midi.MidiEngine
+import com.sloop.go.proto.Arr
+import com.sloop.go.proto.Backup
 import com.sloop.go.proto.Cmd
 import com.sloop.go.proto.Desc
 import com.sloop.go.proto.DrumStep
 import com.sloop.go.proto.Dump
+import com.sloop.go.proto.Fm6
+import com.sloop.go.proto.Fm6Bank
 import com.sloop.go.proto.Fmt
 import com.sloop.go.proto.Info
 import com.sloop.go.proto.Parse
@@ -23,6 +27,10 @@ import com.sloop.go.proto.StepLock
 import com.sloop.go.proto.frame
 import com.sloop.go.proto.replyMatches
 import com.sloop.go.proto.unframe
+import com.sloop.go.store.Clip
+import com.sloop.go.store.ClipKind
+import com.sloop.go.store.ClipNote
+import com.sloop.go.store.Smf
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -35,6 +43,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -488,6 +497,105 @@ class DeviceController(context: Context) {
         _state.update { it.withParam(0, info.pe0, d.min + v) }
     }
 
+    // ------------------------------------------------- SYN drum kits (proto v10, SLOOP 2.5) ---
+
+    suspend fun dsynList() = Parse.dsynList(request(Requests.dsynList(), timeout = 600))
+
+    suspend fun dsynGet(which: Int) = Parse.dsynGet(request(Requests.dsynGet(which), timeout = 800))
+
+    /** Writes one sound (22 bytes) of SYN{k+1}; the drum voices play it from RAM at once. rc 0 ok. */
+    suspend fun dsynSound(k: Int, lane: Int, bytes: ByteArray) =
+        Parse.dsynRc(request(Requests.dsynSound(k, lane, bytes), timeout = 600))
+
+    suspend fun dsynHead(k: Int, name: String, crush: Int, src: Int) =
+        Parse.dsynRc(request(Requests.dsynHead(k, name, crush, src), timeout = 600))
+
+    /** Resets SYN{k+1} to a copy of factory kit [src]. */
+    suspend fun dsynCopy(k: Int, src: Int) = Parse.dsynRc(request(Requests.dsynCopy(k, src), timeout = 1500))
+
+    /** Keeps the four kits in flash. rc 0 ok, 3 stop the song first, 4 flash. */
+    suspend fun dsynStore() = Parse.dsynRc(request(Requests.dsynStore(), timeout = 5000, retries = 0))
+
+    suspend fun dsynPlay(k: Int, lane: Int, vel: Int = 110) =
+        Parse.dsynRc(request(Requests.dsynPlay(k, lane, vel), timeout = 400))
+
+    /** The drum track plays kit SYN{k+1} (selects the drum track, sets its KIT through the common queue). */
+    suspend fun dsynUse(k: Int): Boolean {
+        val s = _state.value
+        val info = s.info ?: return false
+        val drum = info.ntrk - 1
+        if (drum < 0) return false
+        if (s.selectedTrack != drum) {
+            val t = Parse.tracks(request(Requests.track(drum)))
+            _state.update { it.copy(tracks = t, selectedTrack = t.sel) }
+            reloadAfterChange()
+        }
+        val d = _state.value.pdesc.getOrNull(info.pe0) ?: return false
+        val i = d.names.indexOf("SYN${k + 1}")
+        if (i < 0) return false
+        setParam(0, info.pe0, d.min + i)
+        return true
+    }
+
+    // ------------------------------------------------- backup objects: song order, FM6 bank (proto v6+) ---
+
+    /** Reads backup object [id] whole; null when this device has no such object. */
+    suspend fun bkRead(id: Int): ByteArray? {
+        val list = Parse.bkList(request(Requests.bkList(), timeout = 5000, retries = 0))
+        if (list.rc != 0) throw IOException("backup list rc ${list.rc}")
+        val it = list.items.firstOrNull { x -> x.id == id } ?: return null
+        val out = ByteArray(it.len)
+        var off = 0
+        while (off < it.len) {
+            val n = minOf(256, it.len - off)
+            val g = Parse.bkGet(request(Requests.bkGet(id, off, n), timeout = 1500, retries = 2))
+            if (g.rc != 0 || g.data.size != n) throw IOException("backup read rc ${g.rc}")
+            g.data.copyInto(out, off)
+            off += n
+        }
+        return out
+    }
+
+    /** Writes backup object [id] whole (begin, data, commit). 0 ok, 3 the song is playing (nothing changed). */
+    suspend fun bkWrite(id: Int, data: ByteArray): Int {
+        var r = Parse.bkPut(request(Requests.bkBegin(id, data.size, Backup.crc32(data)), timeout = 1500, retries = 1))
+        if (r.rc != 0) throw IOException("backup begin rc ${r.rc}")
+        var off = 0
+        while (off < data.size) {
+            val n = minOf(256, data.size - off)
+            r = Parse.bkPut(request(Requests.bkData(id, off, data.copyOfRange(off, off + n)), timeout = 1500, retries = 1))
+            if (r.rc != 0) throw IOException("backup data rc ${r.rc}")
+            off += n
+        }
+        r = Parse.bkPut(request(Requests.bkCommit(id), timeout = 5000, retries = 0))
+        if (r.rc == 3) return 3
+        if (r.rc != 0) throw IOException("backup commit rc ${r.rc}")
+        return 0
+    }
+
+    /** The song order of the device (null when the settings cannot be read as a song). */
+    suspend fun songRead(): Pair<ByteArray, Arr.Song>? {
+        val b = bkRead(Backup.SETTINGS) ?: return null
+        return if (Arr.ok(b)) b to Arr.decode(b) else null
+    }
+
+    /** Writes the song order into the settings object read by [songRead]. 0 ok, 3 stop the song first. */
+    suspend fun songWrite(settings: ByteArray, song: Arr.Song) = bkWrite(Backup.SETTINGS, Arr.encode(settings, song))
+
+    /**
+     * SLOOP 2.5 "Store cartridge": [packs] go to B1..Bn in one flash write (the bank is read whole, records 0..n-1
+     * replaced, the others kept). 0 written, 3 the song is playing, -1 a device without the bank object.
+     */
+    suspend fun fm6StoreCartridge(packs: List<IntArray>): Int {
+        require(packs.isNotEmpty() && packs.size <= Fm6Bank.SLOTS) { "bank: ${packs.size} voices" }
+        val cur = bkRead(Backup.FM6_BANK) ?: return -1
+        val slots = (Fm6Bank.unobj(cur) ?: throw IOException("bank: unknown format")).toMutableList()
+        packs.forEachIndexed { i, pk -> slots[i] = Fm6.pack(Fm6.unpack(pk)) }
+        val rc = bkWrite(Backup.FM6_BANK, Fm6Bank.obj(slots))
+        if (rc == 0) fm6Refresh()
+        return rc
+    }
+
     // ------------------------------------------------- step extras (proto v7/v8) ---
 
     /** Sets step [step]'s nudge, -32..31 in 1/64 of a step (0 = on the grid). Sent at once, not drafted. */
@@ -727,23 +835,88 @@ class DeviceController(context: Context) {
         }
     }
 
-    /**
-     * Fills the drum grid with a ready pattern: [masks] holds the lane bits of each step of the pattern. Only the
-     * steps that differ go out, one edit each, through the same queue (or Store draft) as hand edits; the level and
-     * ratchet of a lane whose hit did not change are kept.
-     */
-    fun applyDrumPattern(masks: List<Int>) {
+    /** The active pattern of the selected track as a clip to save (drum grid or piano roll); null otherwise. */
+    fun captureClip(): Clip? {
         val s = _state.value
-        if (s.link != Link.READY || !s.drumGrid) return
-        for (i in 0 until minOf(s.patternLength, masks.size)) {
-            val cur = s.drumSteps.getOrNull(i) ?: DrumStep(i, 0, IntArray(16), IntArray(16))
-            val diff = cur.on xor masks[i]
-            if (diff == 0) continue
-            val lvl = cur.lvl.copyOf()
-            val rat = cur.rat.copyOf()
-            for (l in 0 until 16) if ((diff shr l) and 1 == 1) { lvl[l] = 0; rat[l] = 0 }
-            setDrumStep(i, cur.copy(on = masks[i], lvl = lvl, rat = rat))
+        if (s.link != Link.READY) return null
+        val len = s.patternLength
+        return when {
+            s.drumGrid -> Clip(ClipKind.DRUM, len, (0 until len).flatMap { i ->
+                val d = s.drumSteps.getOrNull(i) ?: return@flatMap emptyList()
+                (0 until 16).filter { (d.on shr it) and 1 == 1 }.map { ClipNote(i, 1, it, Smf.lvlVel(d.lvl[it])) }
+            })
+            !s.isDrum -> Clip(ClipKind.PIANO, len, decodeNotes(s.steps, len).map { ClipNote(it.start, it.len, it.pitch, 100) })
+            else -> null
         }
+    }
+
+    /**
+     * Puts a saved pattern on the selected track as ordinary step edits (the same queue, or Store draft, as hand
+     * edits): the whole active pattern is replaced and a shorter clip repeats to fill it. A drum clip keeps the
+     * ratchet of a hit that did not change.
+     */
+    fun applyClip(clip: Clip) {
+        val s = _state.value
+        if (s.link != Link.READY) return
+        if (clip.kind == ClipKind.DRUM) {
+            if (!s.drumGrid) return
+            val src = Array(clip.length) { IntArray(16) { -1 } }
+            clip.notes.forEach { if (it.start in 0 until clip.length && it.pitch in 0..15) src[it.start][it.pitch] = Smf.velLvl(it.vel) }
+            for (i in 0 until s.patternLength) {
+                val row = src[i % clip.length]
+                val cur = _state.value.drumSteps.getOrNull(i) ?: DrumStep(i, 0, IntArray(16), IntArray(16))
+                var on = 0
+                val lvl = IntArray(16)
+                val rat = IntArray(16)
+                for (l in 0 until 16) if (row[l] >= 0) {
+                    on = on or (1 shl l); lvl[l] = row[l]
+                    if ((cur.on shr l) and 1 == 1 && cur.lvl[l] == row[l]) rat[l] = cur.rat[l]
+                }
+                val next = DrumStep(i, on, lvl, rat)
+                if (next != cur) setDrumStep(i, next)
+            }
+        } else {
+            if (s.isDrum) return
+            editNotes { st, _ ->
+                val out = ArrayList<PNote>()
+                var base = 0
+                while (base < st.patternLength) {
+                    for (n in clip.notes) {
+                        val at = base + n.start
+                        if (n.start < clip.length && at < st.patternLength)
+                            out.add(PNote(at, minOf(n.len, clip.length - n.start, st.patternLength - at).coerceAtLeast(1), n.pitch.coerceIn(0, 127)))
+                    }
+                    base += clip.length
+                }
+                out
+            }
+        }
+    }
+
+    /**
+     * Drops a saved piano-roll pattern on the roll as one group shifted by [dStep] steps and [dPitch] semitones (kept
+     * inside the pattern and 0..127): the figure stays as saved, and notes already there win where they overlap.
+     * One batch of plain step edits through the normal queue.
+     */
+    fun dropClip(clip: Clip, dStep: Int, dPitch: Int) {
+        editNotes { s, notes ->
+            val src = clip.notes.filter { it.start < s.patternLength }
+                .map { PNote(it.start, minOf(it.len, s.patternLength - it.start).coerceAtLeast(1), it.pitch.coerceIn(0, 127)) }
+            if (src.isEmpty()) return@editNotes null
+            val ds = dStep.coerceIn(-src.minOf { it.start }, s.patternLength - 1 - src.maxOf { it.end })
+            val dp = dPitch.coerceIn(-src.minOf { it.pitch }, 127 - src.maxOf { it.pitch })
+            val mono = voiceMode(s) != V_POLY
+            notes + src.flatMap { it.copy(start = it.start + ds, pitch = it.pitch + dp).freeParts(notes, mono) }
+        }
+    }
+
+    /** Selects [track] and waits until its pattern is loaded (so a clip can be applied to it). */
+    suspend fun selectTrackAndWait(track: Int): Boolean {
+        if (_state.value.selectedTrack == track && _state.value.link == Link.READY) return true
+        selectTrack(track)
+        return withTimeoutOrNull(8000) {
+            _state.first { it.link == Link.READY && it.selectedTrack == track && (it.steps.isNotEmpty() || it.drumSteps.isNotEmpty()) }
+        } != null
     }
 
     fun setSequencerMode(mode: SequencerMode): Boolean {

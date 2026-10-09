@@ -96,6 +96,29 @@ object Requests {
     fun smpErase(slot: Int) = Req(Cmd.SMP_ERASE, ia(slot and 0x7F))
     fun smpInfo() = Req(Cmd.SMP_INFO, IntArray(0))
 
+    // v10 (SLOOP 2.5): SYN drum kits. `which` = a factory kit 0.., or Dsyn.USER + k.
+    fun dsynList() = Req(Cmd.DSYN_LIST, IntArray(0))
+    fun dsynGet(which: Int) = Req(Cmd.DSYN_GET, ia(which and 0x7F))
+    fun dsynSound(k: Int, lane: Int, bytes: ByteArray) =
+        Req(Cmd.DSYN_PUT, ia(k and 0x7F, lane and 0x7F) + Smp.pack7(bytes))
+    fun dsynHead(k: Int, name: String, crush: Int, src: Int) =
+        Req(Cmd.DSYN_PUT, ia(k and 0x7F, 16) + Smp.pack7(Dsyn.name8(name) + byteArrayOf(crush.toByte(), src.toByte())))
+    fun dsynCopy(k: Int, src: Int) = Req(Cmd.DSYN_PUT, ia(k and 0x7F, 17) + Smp.pack7(byteArrayOf(src.toByte())))
+    fun dsynStore() = Req(Cmd.DSYN_STORE, IntArray(0))
+    fun dsynPlay(k: Int, lane: Int, vel: Int = 110) =
+        Req(Cmd.DSYN_PLAY, ia(k and 0x7F, lane and 0x7F, vel.coerceIn(1, 127)))
+
+    // v6 backup objects (BK_*), used for the song order and the FM6 bank. Numbers are 5 x 7 bit (u35).
+    fun bkList() = Req(Cmd.BK_LIST, IntArray(0))
+    fun bkGet(id: Int, off: Int, n: Int) =
+        Req(Cmd.BK_GET, ia(id and 0x7F) + Backup.u35(off.toLong()) + ia(n and 0x7F, (n shr 7) and 0x7F))
+    fun bkBegin(id: Int, len: Int, crc: Long) =
+        Req(Cmd.BK_PUT, ia(0, id and 0x7F) + Backup.u35(len.toLong()) + Backup.u35(crc))
+    fun bkData(id: Int, off: Int, bytes: ByteArray) =
+        Req(Cmd.BK_PUT, ia(1, id and 0x7F) + Backup.u35(off.toLong()) + Smp.pack7(bytes))
+    fun bkCommit(id: Int) = Req(Cmd.BK_PUT, ia(2, id and 0x7F))
+    fun bkAbort(id: Int) = Req(Cmd.BK_PUT, ia(3, id and 0x7F))
+
     /** value = null deletes the lock on (step, param). */
     fun lockSet(tr: Int, step: Int, param: Int, value: Int? = null) =
         Req(Cmd.LOCK_SET, if (value == null) ia(tr and 0x7F, step and 0x7F, param and 0x7F)
@@ -117,6 +140,10 @@ fun replyMatches(cmd: Int, args: IntArray, a: IntArray): Boolean = when (cmd) {
     Cmd.MICRO_SET, Cmd.FILL_SET -> a.getOrNull(0) == args.getOrNull(0) && a.getOrNull(1) == args.getOrNull(1)
     Cmd.FM6_GET, Cmd.FM6_PUT -> a.getOrNull(0) == args.getOrNull(0) && a.getOrNull(1) == args.getOrNull(1)
     Cmd.FM6_ERASE -> a.getOrNull(0) == args.getOrNull(0)
+    Cmd.DSYN_GET -> a.getOrNull(0) == args.getOrNull(0)
+    Cmd.DSYN_PUT, Cmd.DSYN_PLAY -> a.getOrNull(0) == args.getOrNull(0) && a.getOrNull(1) == args.getOrNull(1)
+    Cmd.BK_GET -> a.getOrNull(0) == args.getOrNull(0) && (0 until 5).all { a.getOrNull(2 + it) == args.getOrNull(1 + it) }
+    Cmd.BK_PUT -> a.getOrNull(0) == args.getOrNull(0) && a.getOrNull(1) == args.getOrNull(1)
     Cmd.MICRO_GET, Cmd.FILL_GET, Cmd.LOCK_GET -> a.getOrNull(0) == args.getOrNull(0)
     Cmd.LOCK_SET -> a.getOrNull(0) == args.getOrNull(0) && a.getOrNull(1) == args.getOrNull(1) &&
         a.getOrNull(2) == args.getOrNull(2)

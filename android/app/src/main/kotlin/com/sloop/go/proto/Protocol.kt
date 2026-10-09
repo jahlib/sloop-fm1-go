@@ -64,6 +64,11 @@ object Cmd {
     const val FM6_PUT = 69
     const val FM6_LIST = 70
     const val FM6_ERASE = 71
+    const val DSYN_LIST = 72     // v10 (SLOOP 2.5): the SYN1..4 synthesised drum kits
+    const val DSYN_GET = 73
+    const val DSYN_PUT = 74
+    const val DSYN_STORE = 75
+    const val DSYN_PLAY = 76
 
     /** Frames the device sends on its own while WATCH is on; never replies. */
     val PUSH = setOf(CHANGED, RELOAD, STEP_CHANGED, TRACK_CHANGED)

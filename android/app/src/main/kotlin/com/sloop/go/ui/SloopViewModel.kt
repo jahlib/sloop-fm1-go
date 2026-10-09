@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import com.sloop.go.device.DeviceController
 import com.sloop.go.midi.MidiDeviceDesc
+import com.sloop.go.store.PatternStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -21,6 +22,9 @@ class SloopViewModel(app: Application) : AndroidViewModel(app) {
     val state = controller.state
     val fm6 = Fm6Editor()
     val samples = SamplesEditor()
+    val dsyn = DrumSynthEditor()
+    val patterns = PatternStore(app).also { it.seedDefaults() }
+    val song = SongEditor()
 
     /** Work that must outlive the page that started it (a bank upload, a flash write). */
     private val jobs = CoroutineScope(SupervisorJob() + Dispatchers.Main)
