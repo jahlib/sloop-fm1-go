@@ -140,6 +140,13 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     var carry by remember { mutableStateOf<Carry?>(null) }
     val kind = if (state.drumGrid) ClipKind.DRUM else ClipKind.PIANO
 
+    // Refit once the loaded steps of another track actually arrive: a track switch replaces the
+    // steps list (user edits keep the same track), and a loaded clip refits right away.
+    var fitTrack by remember { mutableIntStateOf(-1) }
+    LaunchedEffect(state.steps, state.drumSteps) {
+        if (state.selectedTrack != fitTrack) { fitTrack = state.selectedTrack; fitTick++ }
+    }
+
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         ControlPanel(vm, state, nav, onPick = { picker = true }, onClear = { askClear = true }, onFit = { fitTick++ },
@@ -157,7 +164,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     browser?.let { mode ->
         ClipBrowserOverlay(vm, kind, mode, carrying = carry != null,
             onDismiss = { browser = null; carry = null },
-            onLoad = { vm.controller.applyClip(it) },
+            onLoad = { vm.controller.applyClip(it); fitTick++ },
             carry = if (kind == ClipKind.PIANO) ClipDrag(
                 start = { clip, pos -> carry = Carry(clip).also { it.pos = pos } },
                 move = { carry?.pos = it },
@@ -576,8 +583,8 @@ private fun DrumGrid(
 
     LaunchedEffect(state.selectedTrack, length, vp.size.width > 0, fitTick) {
         if (vp.size.width == 0) return@LaunchedEffect
-        vp.cw = ((vp.w - vp.lw) / length).coerceIn(30f * d, 64f * d)
-        vp.rh = ((vp.h - vp.hdr) / DRUM_LANES.size).coerceIn(26f * d, 56f * d)
+        vp.cw = ((vp.w - vp.lw) / length).coerceIn(4f * d, 64f * d)
+        vp.rh = ((vp.h - vp.hdr) / DRUM_LANES.size).coerceIn(8f * d, 56f * d)
         vp.sx = 0f; vp.sy = 0f; vp.clamp()
     }
 
