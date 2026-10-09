@@ -835,6 +835,50 @@ class DeviceController(context: Context) {
         }
     }
 
+    /**
+     * Moves (or, with [copy], clones) the drum hits named by [keys] (step * 16 + lane) as one group by [dStep] steps
+     * and [dLane] lanes, with their level and ratchet; the group is kept inside the pattern and the 16 lanes. Hits
+     * already lying where the group lands win: the dragged hit is dropped there. Only the changed steps go out, one
+     * edit each through the normal queue (or Store draft).
+     */
+    fun placeDrumCells(keys: Set<Int>, dStep: Int, dLane: Int, copy: Boolean) {
+        val s = _state.value
+        if (s.link != Link.READY || !s.drumGrid) return
+        val len = s.patternLength
+        val src = keys.map { it / 16 to it % 16 }
+            .filter { (st, l) -> st < len && ((s.drumSteps.getOrNull(st)?.on ?: 0) shr l) and 1 == 1 }
+        if (src.isEmpty()) return
+        val ds = dStep.coerceIn(-src.minOf { it.first }, len - 1 - src.maxOf { it.first })
+        val dl = dLane.coerceIn(-src.minOf { it.second }, 15 - src.maxOf { it.second })
+        if (!copy && ds == 0 && dl == 0) return
+        val work = Array(len) { i -> s.drumSteps.getOrNull(i)?.let { it.copy(lvl = it.lvl.copyOf(), rat = it.rat.copyOf()) }
+            ?: DrumStep(i, 0, IntArray(16), IntArray(16)) }
+        val moved = src.map { (st, l) -> Triple(st + ds, l + dl, work[st].lvl[l] to work[st].rat[l]) }
+        val out = work.map { it.copy(lvl = it.lvl.copyOf(), rat = it.rat.copyOf()) }.toTypedArray()
+        if (!copy) src.forEach { (st, l) ->
+            out[st] = out[st].copy(on = out[st].on and (1 shl l).inv()).also { it.lvl[l] = 0; it.rat[l] = 0 }
+        }
+        for ((st, l, v) in moved) {
+            if ((out[st].on shr l) and 1 == 1) continue
+            out[st] = out[st].copy(on = out[st].on or (1 shl l)).also { it.lvl[l] = v.first; it.rat[l] = v.second }
+        }
+        for (i in 0 until len) if (out[i] != s.drumSteps.getOrNull(i)) setDrumStep(i, out[i])
+    }
+
+    /** Removes the drum hits named by [keys] (step * 16 + lane). */
+    fun deleteDrumCells(keys: Set<Int>) {
+        val s = _state.value
+        if (s.link != Link.READY || !s.drumGrid) return
+        for (i in 0 until s.patternLength) {
+            val cur = s.drumSteps.getOrNull(i) ?: continue
+            var on = cur.on
+            val lvl = cur.lvl.copyOf()
+            val rat = cur.rat.copyOf()
+            for (l in 0 until 16) if ((on shr l) and 1 == 1 && (i * 16 + l) in keys) { on = on and (1 shl l).inv(); lvl[l] = 0; rat[l] = 0 }
+            if (on != cur.on) setDrumStep(i, cur.copy(on = on, lvl = lvl, rat = rat))
+        }
+    }
+
     /** The active pattern of the selected track as a clip to save (drum grid or piano roll); null otherwise. */
     fun captureClip(): Clip? {
         val s = _state.value

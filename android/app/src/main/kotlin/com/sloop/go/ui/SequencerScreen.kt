@@ -23,6 +23,20 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.FitScreen
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.filled.HighlightAlt
+import androidx.compose.material3.FilledTonalIconToggleButton
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -128,8 +142,11 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
             onSave = { browser = BrowserMode.SAVE }, onLoad = { browser = BrowserMode.LOAD },
             onOptions = if (state.drumGrid) null else { { options = true } }, optionsLabel = "Step ${selected + 1}",
             selectMode = selectMode, onSelectMode = { selectMode = it }, selCount = noteSel.size,
-            onDeleteSel = { vm.controller.deleteNotes(noteSel); noteSel = emptySet() })
-        if (state.drumGrid) DrumGrid(vm, state, fitTick, Modifier.weight(1f).fillMaxWidth())
+            onDeleteSel = {
+                if (state.drumGrid) vm.controller.deleteDrumCells(noteSel) else vm.controller.deleteNotes(noteSel)
+                noteSel = emptySet()
+            })
+        if (state.drumGrid) DrumGrid(vm, state, fitTick, selectMode, noteSel, { noteSel = it }, Modifier.weight(1f).fillMaxWidth())
         else PianoRoll(vm, state, fitTick, selected, { sel = it }, selectMode, noteSel, { noteSel = it },
             carry, { carry = null; browser = null }, Modifier.weight(1f).fillMaxWidth())
     }
@@ -174,55 +191,67 @@ private fun ControlPanel(
     selectMode: Boolean, onSelectMode: (Boolean) -> Unit, selCount: Int, onDeleteSel: () -> Unit,
 ) {
     var confirmSwitch by remember { mutableStateOf(false) }
-    val tight = PaddingValues(horizontal = 10.dp)
+    val tight = PaddingValues(horizontal = 8.dp)
     val late = state.sequencerMode == SequencerMode.LATE
-    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            nav()
-            TrackSelect(vm, state)
-            Text(state.soundLabel.substringAfter("· ") + " ▾", Modifier.weight(1f).clickable(onClick = onPick).padding(vertical = 10.dp), color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            FilterChip(selected = !late,
-                onClick = { if (!vm.controller.setSequencerMode(SequencerMode.NOW)) confirmSwitch = true },
-                label = { Text("Live") })
-            FilterChip(selected = late, onClick = { vm.controller.setSequencerMode(SequencerMode.LATE) },
-                label = { Text("Store") })
-            if (!state.drumGrid) VoiceSelect(vm, state)
+    val sep = @Composable { VerticalDivider(Modifier.padding(horizontal = 4.dp).height(24.dp)) }
+    val btn = Modifier.height(32.dp)
+    val mini = @Composable { icon: ImageVector, label: String, click: () -> Unit ->
+        IconButton(onClick = click, modifier = Modifier.size(32.dp)) {
+            Icon(icon, contentDescription = label, modifier = Modifier.size(20.dp))
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (late) Button(onClick = { vm.controller.sendCurrentPattern() },
-                modifier = Modifier.height(30.dp), contentPadding = tight) { Text("SEND") }
-            TextButton(onClick = onClear, modifier = Modifier.height(32.dp), contentPadding = tight) { Text("Clear") }
-            TextButton(onClick = onFit, modifier = Modifier.height(32.dp), contentPadding = tight) { Text("Fit") }
-            if (!state.drumGrid) {
-                TextButton(onClick = { vm.controller.transposeNotes(-12) },
-                    modifier = Modifier.height(32.dp), contentPadding = tight) { Text("-12") }
-                TextButton(onClick = { vm.controller.transposeNotes(12) },
-                    modifier = Modifier.height(32.dp), contentPadding = tight) { Text("+12") }
-                FilterChip(selected = selectMode, onClick = { onSelectMode(!selectMode) },
-                    label = { Text("Select") })
-                if (selectMode && selCount > 0) TextButton(onClick = onDeleteSel,
-                    modifier = Modifier.height(32.dp), contentPadding = tight) { Text("Delete $selCount") }
-            }
-            if (onOptions != null) TextButton(onClick = onOptions, modifier = Modifier.height(32.dp),
-                contentPadding = tight) { Text(optionsLabel) }
+    }
+    // One scrolling row of function blocks: track | sound | mode | edit | key | pattern files | step | status
+    Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).horizontalScroll(rememberScrollState())
+        .padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        nav()
+        TrackSelect(vm, state)
+        Text(state.soundLabel.substringAfter("· ") + " ▾",
+            Modifier.widthIn(max = 120.dp).clickable(onClick = onPick).padding(horizontal = 6.dp, vertical = 10.dp),
+            color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (!state.drumGrid) VoiceSelect(vm, state)
+        sep()
+        FilterChip(selected = !late,
+            onClick = { if (!vm.controller.setSequencerMode(SequencerMode.NOW)) confirmSwitch = true },
+            label = { Text("Live") })
+        Spacer(Modifier.width(4.dp))
+        FilterChip(selected = late, onClick = { vm.controller.setSequencerMode(SequencerMode.LATE) },
+            label = { Text("Store") })
+        if (late) {
+            Spacer(Modifier.width(4.dp))
+            Button(onClick = { vm.controller.sendCurrentPattern() }, modifier = Modifier.height(30.dp),
+                contentPadding = tight) { Text("SEND") }
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onSave, modifier = Modifier.height(32.dp), contentPadding = tight) { Text("Save") }
-            TextButton(onClick = onLoad, modifier = Modifier.height(32.dp), contentPadding = tight) { Text("Load") }
-            val parts = buildList {
-                add("LEN ${state.patternLength}")
-                if (late && state.draftTracks.isNotEmpty()) add("drafts ${state.draftTracks.sorted().joinToString(",") { "${it + 1}" }}")
-                if (state.queuedEdits > 0) add("queue ${state.queuedEdits}")
-            }
-            Text(state.queueError ?: parts.joinToString(" · "), Modifier.weight(1f), textAlign = TextAlign.End,
-                color = if (state.queueError != null) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        sep()
+        mini(Icons.Filled.DeleteSweep, "Clear pattern", onClear)
+        mini(Icons.Filled.FitScreen, "Fit to screen", onFit)
+        sep()
+        if (!state.drumGrid) {
+            TextButton(onClick = { vm.controller.transposeNotes(-12) }, modifier = btn, contentPadding = tight) { Text("-12") }
+            TextButton(onClick = { vm.controller.transposeNotes(12) }, modifier = btn, contentPadding = tight) { Text("+12") }
         }
+        FilledTonalIconToggleButton(checked = selectMode, onCheckedChange = onSelectMode, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Filled.HighlightAlt, contentDescription = "Select mode", modifier = Modifier.size(20.dp))
+        }
+        if (selectMode && selCount > 0) TextButton(onClick = onDeleteSel, modifier = btn,
+            contentPadding = tight) { Text("Delete $selCount") }
+        sep()
+        mini(Icons.Filled.Save, "Save pattern", onSave)
+        mini(Icons.Filled.FolderOpen, "Load pattern", onLoad)
+        if (onOptions != null) {
+            sep()
+            TextButton(onClick = onOptions, modifier = btn, contentPadding = tight) { Text(optionsLabel) }
+        }
+        sep()
+        val parts = buildList {
+            add("LEN ${state.patternLength}")
+            if (late && state.draftTracks.isNotEmpty()) add("drafts ${state.draftTracks.sorted().joinToString(",") { "${it + 1}" }}")
+            if (state.queuedEdits > 0) add("queue ${state.queuedEdits}")
+        }
+        Text(state.queueError ?: parts.joinToString(" · "), Modifier.padding(horizontal = 6.dp),
+            color = if (state.queueError != null) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
     if (confirmSwitch) AlertDialog(
         onDismissRequest = { confirmSwitch = false },
@@ -509,14 +538,24 @@ private fun rememberPainter(): Painter {
 // ---------------------------------------------------------------- drum grid ---
 
 @Composable
-private fun DrumGrid(vm: SloopViewModel, state: DeviceState, fitTick: Int, modifier: Modifier) {
+private fun DrumGrid(
+    vm: SloopViewModel, state: DeviceState, fitTick: Int, selectMode: Boolean, cellSel: Set<Int>,
+    onCellSel: (Set<Int>) -> Unit, modifier: Modifier,
+) {
     val length = state.patternLength
     val steps = state.drumSteps
     val d = LocalDensity.current.density
     val vp = remember(state.selectedTrack) { Viewport() }
-    vp.d = d; vp.lw = 64f * d; vp.hdr = 26f * d; vp.cols = length; vp.rows = DRUM_LANES.size
+    vp.d = d; vp.lw = 64f * d; vp.hdr = 26f * d; vp.cols = length; vp.rows = DRUM_LANES.size; vp.selectMode = selectMode
     val painter = rememberPainter()
     val cs = MaterialTheme.colorScheme
+    var gdrag by remember(state.selectedTrack, selectMode) { mutableStateOf<GroupDrag?>(null) }
+    var marquee by remember(state.selectedTrack, selectMode) { mutableStateOf<Marquee?>(null) }
+    val onSelNow by rememberUpdatedState(onCellSel)
+    val live = remember { object { var v: Set<Int> = cellSel } }   // the selection as the gesture sees it
+    live.v = cellSel
+    fun setSel(s: Set<Int>) { live.v = s; onSelNow(s) }
+    val haptic = LocalHapticFeedback.current
 
     LaunchedEffect(state.selectedTrack, length, vp.size.width > 0, fitTick) {
         if (vp.size.width == 0) return@LaunchedEffect
@@ -525,9 +564,11 @@ private fun DrumGrid(vm: SloopViewModel, state: DeviceState, fitTick: Int, modif
         vp.sx = 0f; vp.sy = 0f; vp.clamp()
     }
 
-    val handler = remember(state.selectedTrack, length) {
+    val handler = remember(state.selectedTrack, length, selectMode) {
         object : GridHandler {
             var paintOn: Boolean? = null
+            fun picked() = selCells(vm.controller.state.value.drumSteps, live.v, length)
+            fun gridPoint(p: Offset) = Offset((p.x - vp.lw + vp.sx) / vp.cw, (p.y - vp.hdr + vp.sy) / vp.rh)
             var lastCell = -1 to -1
             fun cell(p: Offset): Pair<Int, Int>? {
                 if (p.x < vp.lw || p.y < vp.hdr) return null
@@ -537,8 +578,36 @@ private fun DrumGrid(vm: SloopViewModel, state: DeviceState, fitTick: Int, modif
             }
             fun isOn(step: Int, lane: Int) =
                 ((vm.controller.state.value.drumSteps.getOrNull(step)?.on ?: 0) shr lane) and 1 == 1
-            override fun tap(p: Offset) { cell(p)?.let { (s, l) -> toggleDrum(vm, s, l) } }
+            override fun tap(p: Offset) {
+                val c = cell(p)
+                if (!selectMode) { c?.let { (s, l) -> toggleDrum(vm, s, l) }; return }
+                if (c == null || !isOn(c.first, c.second)) { if (live.v.isNotEmpty()) setSel(emptySet()); return }
+                val k = c.first * 16 + c.second           // tap a hit: toggle it in the selection; empty: deselect all
+                setSel(if (k in live.v) live.v - k else live.v + k)
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            }
+            override fun beginMove(p: Offset): Boolean {
+                if (!selectMode) return false
+                val c = cell(p)
+                if (c != null && isOn(c.first, c.second)) {   // drag a hit: carry the selection (a loose hit becomes it)
+                    val k = c.first * 16 + c.second
+                    if (k !in live.v) setSel(setOf(k))
+                    gdrag = GroupDrag(c.first, c.second, false)
+                } else if (p.x >= vp.lw && p.y >= vp.hdr) {   // drag on empty grid: select frame
+                    val g = gridPoint(p)
+                    marquee = Marquee(g.x, g.y, g.x, g.y)
+                } else return false
+                return true
+            }
             override fun longPress(p: Offset): Boolean {
+                if (selectMode) {                              // hold a hit: take a copy of the selection and carry it
+                    val c = cell(p)?.takeIf { isOn(it.first, it.second) } ?: return false
+                    val k = c.first * 16 + c.second
+                    if (k !in live.v) setSel(setOf(k))
+                    gdrag = GroupDrag(c.first, c.second, true)
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    return true
+                }
                 val (s, l) = cell(p) ?: return false
                 paintOn = !isOn(s, l)
                 lastCell = s to l
@@ -546,13 +615,39 @@ private fun DrumGrid(vm: SloopViewModel, state: DeviceState, fitTick: Int, modif
                 return true
             }
             override fun drag(p: Offset) {
+                if (selectMode) {
+                    gdrag?.let { g -> gdrag = GroupDrag(g.grabStep, g.grabRow, g.copy,
+                        vp.stepAt(p.x) - g.grabStep, vp.rowAt(p.y) - g.grabRow) }
+                    marquee?.let { m -> val g = gridPoint(p); marquee = Marquee(m.x0, m.y0, g.x, g.y) }
+                    return
+                }
                 val c = cell(p) ?: return
                 if (c == lastCell) return
                 lastCell = c
                 if (isOn(c.first, c.second) != paintOn) toggleDrum(vm, c.first, c.second)
             }
-            override fun release(p: Offset) { paintOn = null }
-            override fun cancel() { paintOn = null }
+            override fun release(p: Offset) {
+                if (selectMode) {
+                    drag(p)
+                    gdrag?.let { g ->
+                        val sel = picked()
+                        val (ds, dl) = drumShift(sel, length, g.dStep, g.dPitch)
+                        if (g.copy || ds != 0 || dl != 0) {
+                            vm.controller.placeDrumCells(live.v, g.dStep, g.dPitch, g.copy)
+                            if (ds != 0 || dl != 0) setSel(sel.map { (s, l) -> (s + ds) * 16 + l + dl }.toSet())
+                        }
+                    }
+                    marquee?.let { m ->
+                        val on = vm.controller.state.value.drumSteps
+                        setSel((0 until length).flatMap { s -> (0 until 16).filter { l ->
+                            ((on.getOrNull(s)?.on ?: 0) shr l) and 1 == 1 && m.hitsCell(s, l) }.map { s * 16 + it } }.toSet())
+                    }
+                    gdrag = null; marquee = null
+                    return
+                }
+                paintOn = null
+            }
+            override fun cancel() { paintOn = null; gdrag = null; marquee = null }
         }
     }
 
@@ -566,15 +661,38 @@ private fun DrumGrid(vm: SloopViewModel, state: DeviceState, fitTick: Int, modif
         val r1 = ((sy + size.height - hdr) / rh).toInt().coerceIn(0, DRUM_LANES.size - 1)
         val pad = 2f * d
         clipRect(lw, hdr) {
+            val picked = if (selectMode) selCells(steps, cellSel, length) else emptyList()
+            val lifted = gdrag?.takeIf { !it.copy }
             for (r in r0..r1) for (c in c0..c1) {
                 val on = ((steps.getOrNull(c)?.on ?: 0) shr r) and 1 == 1
+                val isSel = on && selectMode && ((c to r) in picked || marquee?.hitsCell(c, r) == true)
                 val color = when {
+                    isSel -> if (lifted != null && (c to r) in picked) cs.tertiary.copy(alpha = 0.3f) else cs.tertiary
                     on -> cs.primary
                     (c / 4) % 2 == 0 -> cs.surfaceVariant
                     else -> cs.surface
                 }
                 drawRoundRect(color, Offset(lw + c * cw - sx + pad, hdr + r * rh - sy + pad),
                     Size(cw - 2 * pad, rh - 2 * pad), CornerRadius(5f * d))
+                if (isSel) drawRoundRect(cs.onTertiary.copy(alpha = 0.9f), Offset(lw + c * cw - sx + pad, hdr + r * rh - sy + pad),
+                    Size(cw - 2 * pad, rh - 2 * pad), CornerRadius(5f * d), style = Stroke(1.5f * d))
+            }
+            gdrag?.let { g ->                            // the carried group (or its clone) where it would land
+                val (ds, dl) = drumShift(picked, length, g.dStep, g.dPitch)
+                for ((s, l) in picked) {
+                    val x = lw + (s + ds) * cw - sx + pad
+                    val y = hdr + (l + dl) * rh - sy + pad
+                    drawRoundRect(cs.tertiary.copy(alpha = 0.75f), Offset(x, y), Size(cw - 2 * pad, rh - 2 * pad), CornerRadius(5f * d))
+                    drawRoundRect(cs.onTertiary, Offset(x, y), Size(cw - 2 * pad, rh - 2 * pad), CornerRadius(5f * d),
+                        style = Stroke(1.5f * d))
+                }
+            }
+            marquee?.let { m ->
+                val left = lw + min(m.x0, m.x1) * cw - sx
+                val top = hdr + min(m.y0, m.y1) * rh - sy
+                val sz = Size(kotlin.math.abs(m.x1 - m.x0) * cw, kotlin.math.abs(m.y1 - m.y0) * rh)
+                drawRect(cs.tertiary.copy(alpha = 0.15f), Offset(left, top), sz)
+                drawRect(cs.tertiary, Offset(left, top), sz, style = Stroke(1.5f * d))
             }
         }
         clipRect(lw, 0f, size.width, hdr) {
@@ -623,7 +741,19 @@ private class Marquee(val x0: Float, val y0: Float, val x1: Float, val y1: Float
         val r = TOP_NOTE - n.pitch
         return n.start < max(x0, x1) && n.end + 1 > min(x0, x1) && r < max(y0, y1) && r + 1 > min(y0, y1)
     }
+
+    fun hitsCell(step: Int, lane: Int) = step < max(x0, x1) && step + 1 > min(x0, x1) && lane < max(y0, y1) && lane + 1 > min(y0, y1)
 }
+
+/** The selected drum hits (step to lane) among [keys] (step * 16 + lane). */
+private fun selCells(steps: List<DrumStep>, keys: Set<Int>, length: Int): List<Pair<Int, Int>> =
+    keys.map { it / 16 to it % 16 }.filter { (s, l) -> s < length && ((steps.getOrNull(s)?.on ?: 0) shr l) and 1 == 1 }
+
+/** The drum group's shift kept inside the pattern and the 16 lanes (what the controller applies too). */
+private fun drumShift(cells: List<Pair<Int, Int>>, length: Int, dStep: Int, dLane: Int): Pair<Int, Int> =
+    if (cells.isEmpty()) 0 to 0 else
+        dStep.coerceIn(-cells.minOf { it.first }, length - 1 - cells.maxOf { it.first }) to
+            dLane.coerceIn(-cells.minOf { it.second }, 15 - cells.maxOf { it.second })
 
 /** The group's shift kept inside the pattern and the note range (what the controller applies too). */
 private fun clampShift(sel: List<PNote>, length: Int, dStep: Int, dPitch: Int): Pair<Int, Int> =
