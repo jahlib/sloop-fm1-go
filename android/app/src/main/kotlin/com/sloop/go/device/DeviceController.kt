@@ -921,12 +921,17 @@ class DeviceController(context: Context) {
 
     /**
      * Puts a saved pattern on the selected track as ordinary step edits (the same queue, or Store draft, as hand
-     * edits): the whole active pattern is replaced and a shorter clip repeats to fill it. A drum clip keeps the
-     * ratchet of a hit that did not change.
+     * edits): the whole active pattern is replaced and a shorter clip repeats to fill it. A clip longer than the
+     * active pattern grows LEN to fit it — never shrinks it. A drum clip keeps the ratchet of a hit that did not
+     * change.
      */
     fun applyClip(clip: Clip) {
-        val s = _state.value
+        var s = _state.value
         if (s.link != Link.READY) return
+        if (clip.length > s.patternLength) {
+            setParam(0, 29, clip.length.coerceIn(1, s.nstep))
+            s = _state.value
+        }
         if (clip.kind == ClipKind.DRUM) {
             if (!s.drumGrid) return
             val src = Array(clip.length) { IntArray(16) { -1 } }

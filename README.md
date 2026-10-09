@@ -36,7 +36,8 @@ so edits reach the FM-1 immediately.
   grid (frame-select — or just hold empty space in the piano roll, drag the whole figure, stretch them all by one
   note's edge, hold to clone it, existing notes win on overlap), ±12 transpose with auto-fit; **Save / Load** of note
   patterns as MIDI files kept inside the app (separate piano-roll and drum lists with previews; tap to load, or hold
-  one and drag it onto the piano roll; 12 ready drum and 12 ready piano patterns included). Only the notes are stored,
+  one and drag it onto the piano roll; 20 ready drum and 30 ready piano patterns included, some of them 64 steps —
+loading a longer clip grows the pattern length to fit it). Only the notes are stored,
   never the sound or knob positions. A **MIDI patterns** page renames, deletes and loads them onto any track.
 - **FM6 patches** (SLOOP 2.4) — slot library, DX7 SysEx import / export from phone storage, upload to the bank or to a
   track, and a full six-operator editor in Sound-style knob blocks: per-operator envelope previews, carriers and

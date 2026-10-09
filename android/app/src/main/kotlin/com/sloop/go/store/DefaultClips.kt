@@ -26,6 +26,12 @@ object DefaultClips {
             s.mapIndexedNotNull { i, c -> if (c == 'x') ClipNote(i, 1, lane, 100) else null }
         })
 
+    /** Four bars of 64 steps; each lane is a 64-char row (usually a 16-step row repeated). */
+    private fun drum64(name: String, vararg lanes: Pair<Int, String>): Pair<String, Clip> =
+        name to Clip(ClipKind.DRUM, 64, lanes.flatMap { (lane, s) ->
+            s.mapIndexedNotNull { i, c -> if (c == 'x') ClipNote(i, 1, lane, 100) else null }
+        })
+
     /** Notes as "start:length:pitch" words. */
     private fun piano(name: String, notes: String, length: Int = 16): Pair<String, Clip> =
         name to Clip(ClipKind.PIANO, length, notes.trim().split(Regex("\\s+")).map {
@@ -35,6 +41,15 @@ object DefaultClips {
 
     private fun every(step: Int, vararg pitches: Int, count: Int = 16) =
         (0 until count).joinToString(" ") { i -> "${i * step}:1:${pitches[i % pitches.size]}" }
+
+    /** A [block]-step phrase repeated [times] times, shifting each note's start — for 32/64-step clips. */
+    private fun phrase(notes: String, block: Int, times: Int) =
+        (0 until times).joinToString(" ") { rep ->
+            notes.trim().split(Regex("\\s+")).joinToString(" ") { w ->
+                val (s, l, p) = w.split(":").map(String::toInt)
+                "${rep * block + s}:$l:$p"
+            }
+        }
 
     fun drums(): List<Pair<String, Clip>> = listOf(
         drum("Four on the floor",
@@ -73,6 +88,36 @@ object DefaultClips {
         drum("Bossa nova",
             KICK to "x..x....x..x....", RIM to "x..x..x...x..x..",
             PEDAL to "x.x.x.x.x.x.x.x.", CONGA to "....x.....x.x...", COWBELL to "x......x........"),
+        drum("Half time",
+            KICK to "x.........x.....", SNARE to "........x.......",
+            HAT to "x.x.x.x.x.x.x.x.", OPEN_HAT to "..............x."),
+        drum("Double time",
+            KICK to "x.........x.....", SNARE to "....x.....x..x..",
+            HAT to "x.xxx.xxx.xxx.xx", SHAKER to "..x...x...x...x."),
+        drum("Swing",
+            KICK to "x...x.....x.....", SNARE to "....x.......x...",
+            HAT to "x.xx.xx.xx.xx.xx", OPEN_HAT to "..x.......x....."),
+        drum("Electro",
+            KICK to "x.....x..x......", SNARE to "....x.......x...",
+            CLAP to "....x.......x...", HAT to "..x...x...x...x.", RIM to "............x..."),
+        drum("Afrobeat",
+            KICK to "x.....x....x....", RIM to "..x..x..x..x....",
+            CONGA to "x..x.xx...x..x.x", HAT to "x.x.x.x.x.x.x.x.", COWBELL to "....x......x...."),
+        drum("Samba",
+            KICK to "x.......x.......", RIM to "x.xx.xx.xx.xx.xx",
+            CONGA to "..x...x...x...x.", PEDAL to "x.x.x.x.x.x.x.x.", COWBELL to "x......x..x....."),
+        drum64("Four bars",
+            KICK to ("x...x...x...x...".repeat(3) + "x...x...x..x.x.."),
+            CLAP to "....x.......x...".repeat(4),
+            HAT to "x.x.x.x.x.x.x.x.".repeat(4),
+            OPEN_HAT to "..x...x...x...x.".repeat(4),
+            CRASH to ("x" + ".".repeat(63))),
+        drum64("DnB journey",
+            KICK to ("x.........x.....".repeat(2) + "x.........x.x..." + "x....x....x....."),
+            SNARE to "....x.......x...".repeat(4),
+            RIDE to "..x...x...x...x.".repeat(4),
+            HAT to "x.x.x.x.x.x.x.x.".repeat(4),
+            CRASH to ("x" + ".".repeat(63))),
     )
 
     fun piano(): List<Pair<String, Clip>> = listOf(
@@ -89,5 +134,28 @@ object DefaultClips {
         piano("Sixteenth ostinato", "0:1:48 1:1:48 2:1:60 3:1:48 4:1:51 5:1:48 6:1:60 7:1:48 " +
             "8:1:53 9:1:48 10:1:60 11:1:48 12:1:51 13:1:48 14:1:60 15:1:55"),
         piano("Dub bass", "0:3:36 6:2:36 8:3:39 12:2:41 14:2:34"),
+        piano("Minor arp down", every(1, 60, 55, 51, 48)),
+        piano("Major arp three octaves", every(1, 48, 52, 55, 60, 64, 67, 72)),
+        piano("Broken chord", "0:1:48 1:1:55 2:1:52 3:1:60 4:1:48 5:1:55 6:1:52 7:1:60 " +
+            "8:1:48 9:1:55 10:1:52 11:1:60 12:1:48 13:1:55 14:1:52 15:1:64"),
+        piano("Eighth note bass", every(2, 36, count = 8)),
+        piano("Offbeat stabs", "2:1:60 2:1:64 6:1:59 6:1:62 10:1:57 10:1:60 14:1:55 14:1:59"),
+        piano("Major stabs", "0:1:60 0:1:64 0:1:67 4:1:60 4:1:64 4:1:67 " +
+            "8:1:62 8:1:65 8:1:69 12:1:59 12:1:62 12:1:67"),
+        piano("Waltz", "0:4:36 4:2:48 4:2:52 4:2:55 8:2:48 8:2:52 8:2:55", 12),
+        piano("Minor seven arp", every(1, 48, 51, 55, 58, 62)),
+        piano("Pentatonic climb", every(1, 48, 50, 52, 55, 57, 60, 62, 64, 67, 69, 72, 74, 76, 79, 81)),
+        piano("Root and fifth", every(2, 36, 43, count = 8)),
+        piano("Syncopated line", "0:1:48 3:1:48 6:1:50 8:1:48 11:1:50 14:1:52"),
+        piano("Dark bass", "0:3:36 4:3:38 8:3:36 12:3:34"),
+        piano("Gated trance", "0:1:57 0:1:60 0:1:64 2:1:57 2:1:60 2:1:64 4:1:57 4:1:60 4:1:64 6:1:57 6:1:60 6:1:64 " +
+            "8:1:55 8:1:59 8:1:62 10:1:57 10:1:60 10:1:64 12:1:55 12:1:59 12:1:62 14:1:57 14:1:60 14:1:64"),
+        piano("Chromatic walk", every(2, 36, 38, 40, 41, 43, 41, 40, 38, count = 8)),
+        piano("Two bar melody", "0:2:60 2:1:62 3:1:64 4:2:67 6:2:65 8:3:64 12:2:62 14:2:60 " +
+            "16:2:62 18:1:64 19:1:67 20:2:69 22:2:67 24:2:65 28:4:64", 32),
+        piano("Chord journey", "0:16:60 0:16:64 0:16:67 16:16:57 16:16:60 16:16:64 " +
+            "32:16:53 32:16:57 32:16:60 48:16:55 48:16:59 48:16:62", 64),
+        piano("Mega arp", every(1, 48, 52, 55, 60, 64, 67, 72, 76, count = 64), 64),
+        piano("Bass marathon", phrase("0:2:36 2:1:36 4:2:36 6:1:36 8:2:39 10:1:39 12:2:41 14:1:36", 16, 4), 64),
     )
 }

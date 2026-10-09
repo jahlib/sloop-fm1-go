@@ -153,6 +153,17 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
             onSave = { browser = BrowserMode.SAVE }, onLoad = { browser = BrowserMode.LOAD },
             onOptions = if (state.drumGrid) null else { { options = true } }, optionsLabel = "Step ${selected + 1}",
             selectMode = selectMode, onSelectMode = { selectMode = it }, selCount = noteSel.size,
+            onTranspose = { d ->
+                if (selectMode && noteSel.isNotEmpty()) {
+                    val picked = decodeNotes(state.steps, state.patternLength)
+                        .filter { noteKey(it.pitch, it.start) in noteSel }
+                    vm.controller.placeNotes(noteSel, 0, d, copy = false)
+                    val dp = clampShift(picked, state.patternLength, 0, d).second
+                    val after = decodeNotes(vm.controller.state.value.steps, state.patternLength)
+                        .map { noteKey(it.pitch, it.start) }.toSet()
+                    noteSel = picked.map { noteKey(it.pitch + dp, it.start) }.filter { it in after }.toSet()
+                } else vm.controller.transposeNotes(d)
+            },
             onDeleteSel = {
                 if (state.drumGrid) vm.controller.deleteDrumCells(noteSel) else vm.controller.deleteNotes(noteSel)
                 noteSel = emptySet()
@@ -200,6 +211,7 @@ private fun ControlPanel(
     onSave: () -> Unit, onLoad: () -> Unit,
     onClear: () -> Unit, onFit: () -> Unit, onOptions: (() -> Unit)?, optionsLabel: String,
     selectMode: Boolean, onSelectMode: (Boolean) -> Unit, selCount: Int, onDeleteSel: () -> Unit,
+    onTranspose: (Int) -> Unit,
 ) {
     var confirmSwitch by remember { mutableStateOf(false) }
     val tight = PaddingValues(horizontal = 8.dp)
@@ -211,17 +223,19 @@ private fun ControlPanel(
             Icon(icon, contentDescription = label, modifier = Modifier.size(20.dp))
         }
     }
-    // One fixed row of function blocks: track | sound | mode | edit | key | pattern files | step. It never
-    // scrolls: SpaceEvenly spreads the controls across the whole width, and conditional controls keep their
-    // slots so appearing ones (SEND, the selection trash) don't move the neighbours.
-    // The status is pinned at the right edge outside the row; its measured width is reserved in 40dp steps,
-    // so the controls get all the space it doesn't need while small text changes don't move them.
+    // One row of function blocks: track | sound | mode | edit | key | pattern files | step. SpaceEvenly
+    // spreads them across the whole width when they fit; on narrower screens the row scrolls
+    // horizontally, and conditional controls keep their slots so appearing ones (SEND, the selection
+    // trash) don't move the neighbours. The status is pinned at the right edge outside the row; its
+    // measured width is reserved in 40dp steps, so the controls get all the space it doesn't need
+    // while small text changes don't move them.
     var statusPx by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
     val bucket = with(density) { 40.dp.toPx() }
     val statusW = (((statusPx + bucket - 1) / bucket).toInt() * 40).dp
     BoxWithConstraints(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
-    Row(Modifier.fillMaxWidth().clipToBounds().padding(start = 4.dp, end = statusW + 4.dp),
+    Row(Modifier.horizontalScroll(rememberScrollState()).clipToBounds()
+            .padding(start = 4.dp, end = statusW + 4.dp),
         horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
         nav()
         TrackSelect(vm, state)
@@ -246,8 +260,8 @@ private fun ControlPanel(
         mini(Icons.Filled.FitScreen, "Fit to screen", onFit)
         sep()
         if (!state.drumGrid) {
-            TextButton(onClick = { vm.controller.transposeNotes(-12); onFit() }, modifier = btn, contentPadding = tight) { Text("-12") }
-            TextButton(onClick = { vm.controller.transposeNotes(12); onFit() }, modifier = btn, contentPadding = tight) { Text("+12") }
+            TextButton(onClick = { onTranspose(-12); onFit() }, modifier = btn, contentPadding = tight) { Text("-12") }
+            TextButton(onClick = { onTranspose(12); onFit() }, modifier = btn, contentPadding = tight) { Text("+12") }
         }
         FilledTonalIconToggleButton(checked = selectMode, onCheckedChange = onSelectMode, modifier = Modifier.size(32.dp)) {
             Icon(Icons.Filled.HighlightAlt, contentDescription = "Select mode", modifier = Modifier.size(20.dp))
@@ -408,11 +422,14 @@ private class Viewport {
     var rows = 1
     /** Select mode: one finger draws a frame / drags notes, so two fingers scroll too and edges scroll vertically. */
     var selectMode = false
+    /** Drum grid: lanes permanently fill the height — no vertical scroll or zoom. */
+    var lockV = false
 
     val w get() = size.width.toFloat()
     val h get() = size.height.toFloat()
 
     fun clamp() {
+        if (lockV) rh = max(1f, h - hdr) / rows
         sx = sx.coerceIn(0f, max(0f, cols * cw - (w - lw)))
         sy = sy.coerceIn(0f, max(0f, rows * rh - (h - hdr)))
     }
@@ -423,14 +440,12 @@ private class Viewport {
         val ox = (sx + c.x - lw) / cw
         val oy = (sy + c.y - hdr) / rh
         cw = (cw * zx).coerceIn(14f * d, 120f * d)
-        rh = (rh * zy).coerceIn(22f * d, 44f * d)
+        rh = (rh * zy).coerceIn(3f * d, 44f * d)
         sx = ox * cw - (c.x - lw)
         sy = oy * rh - (c.y - hdr)
         // magnetic fit: within ~24dp of the grid area the pattern snaps to fill it exactly
         val fitCw = (w - lw) / cols
-        val fitRh = (h - hdr) / rows
         if (kotlin.math.abs(cw - fitCw) * cols < 24f * d) { cw = fitCw; sx = 0f }
-        if (kotlin.math.abs(rh - fitRh) * rows < 24f * d) { rh = fitRh; sy = 0f }
         clamp()
     }
 
@@ -570,7 +585,7 @@ private fun DrumGrid(
     val steps = state.drumSteps
     val d = LocalDensity.current.density
     val vp = remember(state.selectedTrack) { Viewport() }
-    vp.d = d; vp.lw = 64f * d; vp.hdr = 26f * d; vp.cols = length; vp.rows = DRUM_LANES.size; vp.selectMode = selectMode
+    vp.d = d; vp.lw = 64f * d; vp.hdr = 26f * d; vp.cols = length; vp.rows = DRUM_LANES.size; vp.selectMode = selectMode; vp.lockV = true
     val painter = rememberPainter()
     val cs = MaterialTheme.colorScheme
     var gdrag by remember(state.selectedTrack, selectMode) { mutableStateOf<GroupDrag?>(null) }
@@ -584,7 +599,7 @@ private fun DrumGrid(
     LaunchedEffect(state.selectedTrack, length, vp.size.width > 0, fitTick) {
         if (vp.size.width == 0) return@LaunchedEffect
         vp.cw = ((vp.w - vp.lw) / length).coerceIn(4f * d, 64f * d)
-        vp.rh = ((vp.h - vp.hdr) / DRUM_LANES.size).coerceIn(8f * d, 56f * d)
+        vp.rh = (vp.h - vp.hdr) / DRUM_LANES.size
         vp.sx = 0f; vp.sy = 0f; vp.clamp()
     }
 

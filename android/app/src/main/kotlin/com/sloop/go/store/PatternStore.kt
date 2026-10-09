@@ -176,7 +176,7 @@ class PatternStore(private val ctx: Context) {
     /** Writes the ready-made patterns once; what the user deletes or renames afterwards stays that way. */
     fun seedDefaults() {
         val prefs = ctx.getSharedPreferences("sloop_midi", Context.MODE_PRIVATE)
-        if (prefs.getInt("seeded", 0) >= 1) return
+        if (prefs.getInt("seeded", 0) >= 2) return
         val base = System.currentTimeMillis() - 100_000
         var i = 0
         for ((kind, clips) in listOf(ClipKind.DRUM to DefaultClips.drums(), ClipKind.PIANO to DefaultClips.piano())) {
@@ -185,7 +185,7 @@ class PatternStore(private val ctx: Context) {
                 if (!f.exists()) { f.writeBytes(Smf.write(clip, name)); f.setLastModified(base + 1000L * i++) }
             }
         }
-        prefs.edit().putInt("seeded", 1).apply()
+        prefs.edit().putInt("seeded", 2).apply()
         rev++
     }
 }
