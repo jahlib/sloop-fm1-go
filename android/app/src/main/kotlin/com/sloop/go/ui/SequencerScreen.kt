@@ -558,7 +558,6 @@ private fun DrumGrid(vm: SloopViewModel, state: DeviceState, fitTick: Int, modif
 
     Canvas(modifier.clipToBounds().background(cs.background)
         .onSizeChanged { vp.size = it; vp.clamp() }
-        .onGloballyPositioned { origin = it.positionInRoot() }
         .pointerInput(handler) { gridGestures(vp) { handler } }) {
         val cw = vp.cw; val rh = vp.rh; val sx = vp.sx; val sy = vp.sy; val lw = vp.lw; val hdr = vp.hdr
         val c0 = (sx / cw).toInt().coerceIn(0, length - 1)
@@ -842,6 +841,7 @@ private fun PianoRoll(
 
     Canvas(modifier.clipToBounds().background(cs.background)
         .onSizeChanged { vp.size = it; vp.clamp() }
+        .onGloballyPositioned { origin = it.positionInRoot() }
         .pointerInput(handler) { gridGestures(vp) { handler } }) {
         val cw = vp.cw; val rh = vp.rh; val sx = vp.sx; val sy = vp.sy; val lw = vp.lw; val hdr = vp.hdr
         val c0 = (sx / cw).toInt().coerceIn(0, length - 1)
