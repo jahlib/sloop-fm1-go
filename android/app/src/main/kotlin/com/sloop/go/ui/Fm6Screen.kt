@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -201,8 +203,8 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
         item(key = "trackSlots", span = StaggeredGridItemSpan.FullLine) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.Top) {
-            Card(Modifier.weight(0.45f)) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Card(Modifier.weight(0.45f).fillMaxHeight()) {
+                Column(Modifier.fillMaxHeight().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Track", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         for (t in 0 until ntrk) {
@@ -231,6 +233,7 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                             Text("Send to track")
                         }
                     }
+                    Spacer(Modifier.weight(1f))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Switch(checked = ed.live, onCheckedChange = { ed.live = it })
                         Text("  Send while editing", style = MaterialTheme.typography.bodyMedium)
@@ -238,8 +241,8 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                 }
             }
 
-            Card(Modifier.weight(0.55f)) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Card(Modifier.weight(0.55f).fillMaxHeight()) {
+                Column(Modifier.fillMaxHeight().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Slots", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     var open by remember { mutableStateOf(false) }
                     Box {
@@ -297,6 +300,7 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                                 }
                             }) { Text("Erase") }
                     }
+                    Spacer(Modifier.weight(1f))
                     Text("F1–F8 are the factory patches (read only). A bank write needs the device stopped. " +
                         "\"Use on track\" sets the track's PTCH to the slot, as choosing it on the FM-1.",
                         style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
