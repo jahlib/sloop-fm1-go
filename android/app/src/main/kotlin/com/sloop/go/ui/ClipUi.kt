@@ -6,8 +6,10 @@ package com.sloop.go.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
@@ -16,6 +18,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
@@ -125,11 +132,12 @@ fun ClipRow(item: Saved, onClick: (() -> Unit)? = null, drag: ClipDrag? = null, 
     Column(Modifier.fillMaxWidth().onGloballyPositioned { origin = it.positionInRoot() }
         .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
         .then(if (drag != null) Modifier.pointerInput(Unit) {
-            detectDragGesturesAfterLongPress(
-                onDragStart = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); dragNow?.start?.invoke(item.clip, origin + it) },
-                onDrag = { change, _ -> change.consume(); dragNow?.move?.invoke(origin + change.position) },
-                onDragEnd = { dragNow?.end?.invoke() },
-                onDragCancel = { dragNow?.cancel?.invoke() },
+            detectClipCarry(
+                onLongPress = { haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
+                onStart = { dragNow?.start?.invoke(item.clip, origin + it) },
+                onDrag = { dragNow?.move?.invoke(origin + it) },
+                onEnd = { dragNow?.end?.invoke() },
+                onCancel = { dragNow?.cancel?.invoke() },
             )
         } else Modifier)
         .padding(vertical = 8.dp)) {
@@ -206,6 +214,52 @@ fun ClipBrowserOverlay(vm: SloopViewModel, kind: ClipKind, mode: BrowserMode, ca
                     TextButton(onClick = onDismiss) { Text("Close") }
                 }
             }
+        }
+    }
+}
+
+/**
+ * True only if the pointer stays pressed and still for the whole long-press timeout: any move past
+ * touch slop cancels, consumed or not — unlike awaitLongPressOrCancellation, which lets an
+ * unconsumed (e.g. horizontal) scroll finish as a long press and would pick the clip up mid-scroll.
+ */
+private suspend fun AwaitPointerEventScope.awaitCarryPress(pointerId: PointerId): Boolean {
+    val start = currentEvent.changes.firstOrNull { it.id == pointerId }?.position ?: return false
+    return try {
+        withTimeout(viewConfiguration.longPressTimeoutMillis) {
+            var still = true
+            while (still) {
+                val ch = awaitPointerEvent(PointerEventPass.Main).changes
+                    .firstOrNull { it.id == pointerId }
+                still = ch != null && ch.pressed && !ch.isConsumed &&
+                    (ch.position - start).getDistance() <= viewConfiguration.touchSlop
+            }
+            false
+        }
+    } catch (_: PointerEventTimeoutCancellationException) {
+        true
+    }
+}
+
+/**
+ * The clip pick-up gesture: hold still to arm (with haptic feedback), then any movement carries the
+ * clip — a hold-then-release alone never starts a carry, so nothing can be dropped by accident.
+ */
+private suspend fun PointerInputScope.detectClipCarry(
+    onLongPress: () -> Unit, onStart: (Offset) -> Unit, onDrag: (Offset) -> Unit,
+    onEnd: () -> Unit, onCancel: () -> Unit,
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        if (awaitCarryPress(down.id)) {
+            onLongPress()
+            var started = false
+            val finished = drag(down.id) { change ->
+                if (!started) { started = true; onStart(change.position) }
+                onDrag(change.position)
+                change.consume()
+            }
+            if (started) { if (finished) onEnd() else onCancel() }
         }
     }
 }

@@ -169,7 +169,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                 start = { clip, pos -> carry = Carry(clip).also { it.pos = pos } },
                 move = { carry?.pos = it },
                 end = { carry?.released = true },
-                cancel = { carry = null; browser = null }) else null)
+                cancel = { carry = null }) else null)
     }
     }
 
