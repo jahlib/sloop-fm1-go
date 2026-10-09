@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.filled.HighlightAlt
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.FilledTonalIconToggleButton
 import androidx.compose.material3.IconButton
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -206,8 +207,12 @@ private fun ControlPanel(
     // One fixed row of function blocks: track | sound | mode | edit | key | pattern files | step. It never
     // scrolls: SpaceEvenly spreads the controls across the whole width, and conditional controls keep their
     // slots so appearing ones (SEND, the selection trash) don't move the neighbours.
-    // The status is pinned at the right edge outside the row so queue/draft text never shifts the controls.
-    val statusW = 240.dp
+    // The status is pinned at the right edge outside the row; its measured width is reserved in 40dp steps,
+    // so the controls get all the space it doesn't need while small text changes don't move them.
+    var statusPx by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+    val bucket = with(density) { 40.dp.toPx() }
+    val statusW = (((statusPx + bucket - 1) / bucket).toInt() * 40).dp
     BoxWithConstraints(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
     Row(Modifier.fillMaxWidth().clipToBounds().padding(start = 4.dp, end = statusW + 4.dp),
         horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
@@ -248,17 +253,18 @@ private fun ControlPanel(
         mini(Icons.Filled.FolderOpen, "Load pattern", onLoad)
         if (onOptions != null) {
             sep()
-            TextButton(onClick = onOptions, modifier = btn, contentPadding = tight) { Text(optionsLabel) }
+            mini(Icons.Filled.Tune, optionsLabel, onOptions)
         }
     }
     val parts = buildList {
         add("LEN ${state.patternLength}")
         if (late && state.draftTracks.isNotEmpty()) add("drafts ${state.draftTracks.sorted().joinToString(",") { "${it + 1}" }}")
-        if (state.queuedEdits > 0) add("queue ${state.queuedEdits}")
+        add("queue ${state.queuedEdits}")
     }
     Text(state.queueError ?: parts.joinToString(" · "),
-        Modifier.align(Alignment.CenterEnd).widthIn(min = statusW, max = maxWidth)
-            .background(MaterialTheme.colorScheme.surface).padding(horizontal = 6.dp),
+        Modifier.align(Alignment.CenterEnd).widthIn(max = maxWidth)
+            .background(MaterialTheme.colorScheme.surface).padding(start = 8.dp, end = 16.dp)
+            .onSizeChanged { statusPx = it.width },
         color = if (state.queueError != null) MaterialTheme.colorScheme.error
             else MaterialTheme.colorScheme.onSurfaceVariant,
         style = MaterialTheme.typography.labelSmall, maxLines = 1,
