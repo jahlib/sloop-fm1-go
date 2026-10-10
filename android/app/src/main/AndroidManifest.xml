@@ -9,6 +9,10 @@
     <!-- The Samples page records from the mic into USR slots. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Self-update: look up the latest GitHub release, download its APK and hand it to the system installer. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"
@@ -36,5 +40,15 @@
                 android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                 android:resource="@xml/device_filter" />
         </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

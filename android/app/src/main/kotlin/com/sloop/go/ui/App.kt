@@ -161,6 +161,51 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
             }
         }
     }
+    UpdateDialog(vm)
+}
+
+@Composable
+private fun UpdateDialog(vm: SloopViewModel) {
+    if (!vm.updateDialog) return
+    val u = vm.update
+    val current = com.sloop.go.update.Updater.installedVersion(androidx.compose.ui.platform.LocalContext.current)
+    val (title, body) = when (u) {
+        is SloopViewModel.Update.Available ->
+            "Update available" to "Sloop Go ${u.release.tag} is out (installed: $current). Download it now and install?"
+        is SloopViewModel.Update.Downloading ->
+            "Downloading ${u.release.tag}" to "${(u.progress * 100).toInt()}%"
+        is SloopViewModel.Update.Ready ->
+            "Ready to install" to "${u.release.apkName} is downloaded. If Android asks, allow installs from Sloop Go " +
+                "and tap Install again."
+        is SloopViewModel.Update.Failed -> "Update failed" to u.message
+        else -> return
+    }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { vm.dismissUpdate() },
+        title = { Text(title) },
+        text = {
+            Column {
+                Text(body)
+                if (u is SloopViewModel.Update.Downloading)
+                    androidx.compose.material3.LinearProgressIndicator(progress = { u.progress },
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
+            }
+        },
+        confirmButton = {
+            when (u) {
+                is SloopViewModel.Update.Available ->
+                    androidx.compose.material3.TextButton(onClick = { vm.downloadUpdate() }) { Text("Download & install") }
+                is SloopViewModel.Update.Ready ->
+                    androidx.compose.material3.TextButton(onClick = { vm.installUpdate() }) { Text("Install") }
+                else -> {}
+            }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = { vm.dismissUpdate() }) {
+                Text(if (u is SloopViewModel.Update.Available) "Later" else "Close")
+            }
+        },
+    )
 }
 
 /** Extra space the fixed top-left nav cluster needs; screens other than Device pad their header by it. */

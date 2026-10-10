@@ -24,7 +24,7 @@ so edits reach the FM-1 immediately.
 
 ## Install on your phone
 
-**⬇ [Download sloop_go_1.6.6.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.6.6/sloop_go_1.6.6.apk)**
+**⬇ [Download sloop_go_1.6.7.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.6.7/sloop_go_1.6.7.apk)**
 — other versions live on the [Releases](https://github.com/jahlib/sloop-fm1-go/releases) page.
 
 1. Open the link **on the phone** and download the file. The browser may warn that APKs "might be harmful" —
@@ -35,6 +35,10 @@ so edits reach the FM-1 immediately.
    trust it; if you do not, simply do not install — building the APK from this repository yourself gives you the
    same app.
 4. Connect the FM-1 to the phone over USB, open **Sloop Go**, tap **Find MIDI device** and grant USB access.
+
+**Updates:** on launch the app checks the latest GitHub release (tag = version); when it is newer than the installed
+build it offers to download the attached APK and starts the system installer. Android asks once to allow installs
+from Sloop Go. The **Updates** block at the bottom of the **Device** page runs the check by hand.
 
 > **Made on the basis of the work of others.** Sloop Go is a companion app developed for
 > [**SLOOP**](https://github.com/isod89/sloop-fm1) by **isod89**, which in turn builds on

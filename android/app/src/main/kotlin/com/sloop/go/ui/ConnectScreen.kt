@@ -137,6 +137,40 @@ fun ConnectScreen(vm: SloopViewModel, state: DeviceState) {
                 }
             }
         }
+
+        item {
+            val u = vm.update
+            val busy = u is SloopViewModel.Update.Checking || u is SloopViewModel.Update.Downloading
+            Card(Modifier.fillMaxWidth().padding(16.dp, 12.dp)) {
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Updates", style = MaterialTheme.typography.titleMedium)
+                        Text(when (u) {
+                            is SloopViewModel.Update.Checking -> "Checking GitHub…"
+                            is SloopViewModel.Update.UpToDate -> "Sloop Go $version is the latest release."
+                            is SloopViewModel.Update.Available -> "Version ${u.release.tag} is available (installed $version)."
+                            is SloopViewModel.Update.Downloading -> "Downloading ${u.release.tag}: ${(u.progress * 100).toInt()}%"
+                            is SloopViewModel.Update.Ready -> "${u.release.tag} is downloaded and ready to install."
+                            is SloopViewModel.Update.Failed -> "Check failed: ${u.message}"
+                            else -> "Installed: $version. Looks for a newer release on GitHub."
+                        }, style = MaterialTheme.typography.bodySmall,
+                            color = if (u is SloopViewModel.Update.Failed) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Button(enabled = !busy, onClick = {
+                        if (u is SloopViewModel.Update.Available || u is SloopViewModel.Update.Ready) vm.showUpdate()
+                        else vm.checkUpdate(manual = true)
+                    }) {
+                        Text(when (u) {
+                            is SloopViewModel.Update.Available -> "Update"
+                            is SloopViewModel.Update.Ready -> "Install"
+                            else -> "Check for updates"
+                        })
+                    }
+                }
+            }
+        }
     }
 }
 
