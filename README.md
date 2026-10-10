@@ -24,7 +24,7 @@ so edits reach the FM-1 immediately.
 
 ## Install on your phone
 
-**⬇ [Download sloop_go_1.6.10.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.6.10/sloop_go_1.6.10.apk)**
+**⬇ [Download sloop_go_1.6.11.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.6.11/sloop_go_1.6.11.apk)**
 — other versions live on the [Releases](https://github.com/jahlib/sloop-fm1-go/releases) page.
 
 0. You need an **M-VAVE FM-1** device with the latest [**SLOOP** firmware](https://github.com/isod89/sloop-fm1)
@@ -67,7 +67,8 @@ loading a longer clip grows the pattern length to fit it). Only the notes are st
   sequencer: Live sends every change to the track at once, Store keeps edits on the phone until **SEND**, which sits
   next to the menu button in the pinned top-left cluster so it is always in reach.
 - **Drum synth** (SLOOP 2.5) — the four synthesised kits SYN1–SYN4 in Sound-style knob blocks, heard while editing. A pinned top bar holds play/stop, the menu, the SYN picker, the
-  kit name and Play / Reset / Hear changes; the 16 sound pads are pinned along the bottom, the knobs scroll between.
+  kit name and Reset; the 16 sound pads are pinned along the bottom — hold a pad to hear your knob edits —
+  the knobs scroll between.
 - **Song** (SLOOP 2.5) — vertical step cards: A–D section buttons, Bars / Times steppers, move and delete, loop,
   one-tap Add step, read / send.
 - **Samples** (SLOOP 2.4) — USR1–4 user sample slots. Load audio files from phone storage **or record straight from

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2026 Sloop Go contributors. Based on the SLOOP firmware (isod89) and Felucca (Leo Kuroshita);
+// Copyright (C) 2026 Sloop Go. Based on the SLOOP firmware (isod89) and Felucca (Leo Kuroshita);
 // see NOTICE.md.
 @file:OptIn(ExperimentalLayoutApi::class)
 
@@ -50,7 +50,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -87,15 +87,16 @@ class DrumSynthEditor {
     var lane by mutableIntStateOf(0)
     var rev by mutableIntStateOf(0)
     var stored by mutableStateOf(true)
-    var audition by mutableStateOf(true)
+    var held by mutableIntStateOf(0)
     var busy by mutableStateOf(false)
     var message by mutableStateOf<String?>(null)
     var isError by mutableStateOf(false)
     var from by mutableIntStateOf(0)
+    var said by mutableIntStateOf(0)
     val pend = LinkedHashSet<Int>()
     var job: Job? = null
 
-    fun say(text: String, error: Boolean = false) { message = text; isError = error }
+    fun say(text: String, error: Boolean = false) { message = text; isError = error; said++ }
     fun values(): IntArray = Dsyn.decode(kit!!.sounds[lane])
 }
 
@@ -157,7 +158,7 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
             try {
                 delay(if (play) 0 else 80)
                 flush()
-                if (play && ed.audition) ctl.dsynPlay(ed.k, ed.lane)
+                if (ed.held > 0) ctl.dsynPlay(ed.k, ed.lane)
             } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (e: Exception) { ed.say("Error: ${e.message ?: e.javaClass.simpleName}", true) }
         }
@@ -194,6 +195,7 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     }
 
     LaunchedEffect(state.link) { if (ed.kit == null) op { load(ed.k) } }
+    LaunchedEffect(ed.said) { if (ed.message != null) { delay(5000); ed.message = null } }
 
     var confirm by remember { mutableStateOf<Triple<String, String, () -> Unit>?>(null) }
     var pendingExport by remember { mutableStateOf<ByteArray?>(null) }
@@ -291,18 +293,12 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                     modifier = Modifier.width(140.dp).border(1.dp, cs.outline, RoundedCornerShape(8.dp))
                         .padding(horizontal = 10.dp, vertical = 8.dp))
                 VerticalDivider(Modifier.padding(horizontal = 2.dp).height(24.dp))
-                Button(onClick = { vm.launch { runCatching { ctl.dsynPlay(ed.k, ed.lane) } } },
-                    modifier = Modifier.height(32.dp), contentPadding = tight) { Text("Play") }
                 OutlinedButton(enabled = ed.src != null, modifier = Modifier.height(32.dp), contentPadding = tight, onClick = {
                     val s = ed.src ?: return@OutlinedButton
                     kit.sounds[ed.lane] = s.sounds[ed.lane].copyOf()
                     ed.pend.add(ed.lane); ed.stored = false; ed.rev++
                     schedule(true)
                 }) { Text("Reset") }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Switch(checked = ed.audition, onCheckedChange = { ed.audition = it })
-                    Text("Hear changes", style = MaterialTheme.typography.labelMedium)
-                }
                 Spacer(Modifier.width(8.dp))
             }
         }
@@ -408,20 +404,25 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
         }
 
         // ---- pinned footer: the 16 sounds across the whole width, big squarish touch pads
-        if (kit != null) Row(Modifier.fillMaxWidth().background(cs.surface).padding(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (kit != null) Surface(color = cs.surface, tonalElevation = 3.dp, shadowElevation = 12.dp) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Dsyn.LANE_NAMES.forEachIndexed { l, n ->
                 val on = l == ed.lane
                 Box(Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(10.dp))
                     .background(if (on) cs.primary else cs.surfaceVariant)
-                    .clickable {
-                        ed.lane = l; ed.rev++
-                        vm.launch { runCatching { ctl.dsynPlay(ed.k, l) } }
+                    .pointerInput(l) {
+                        detectTapGestures(onPress = {
+                            ed.lane = l; ed.rev++; ed.held++
+                            vm.launch { runCatching { ctl.dsynPlay(ed.k, l) } }
+                            try { tryAwaitRelease() } finally { ed.held-- }
+                        })
                     }, contentAlignment = Alignment.Center) {
                     Text(n, Modifier.padding(horizontal = 2.dp), textAlign = TextAlign.Center, maxLines = 2,
                         color = if (on) cs.onPrimary else cs.onSurfaceVariant,
                         fontSize = 10.sp, lineHeight = 11.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium)
                 }
+            }
             }
         }
     }
