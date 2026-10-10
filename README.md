@@ -24,7 +24,7 @@ so edits reach the FM-1 immediately.
 
 ## Install on your phone
 
-**⬇ [Download sloop_go_1.7.0.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.7.0/sloop_go_1.7.0.apk)**
+**⬇ [Download sloop_go_1.7.1.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.7.1/sloop_go_1.7.1.apk)**
 — other versions live on the [Releases](https://github.com/jahlib/sloop-fm1-go/releases) page.
 
 0. You need an **M-VAVE FM-1** device with the latest [**SLOOP** firmware](https://github.com/isod89/sloop-fm1)
@@ -71,10 +71,11 @@ loading a longer clip grows the pattern length to fit it). Only the notes are st
   the knobs scroll between.
 - **Song** (SLOOP 2.5) — vertical step cards: A–D section buttons, Bars / Times steppers, move and delete, loop,
   one-tap Add step, read / send.
-- **Samples** (SLOOP 2.4) — USR1–4 user sample slots. Load audio files from phone storage **or record straight from
-  the mic** (voice / camera / raw inputs selectable) and drop the take into the slot: **Files** mode maps each file to
-  its note (root from the file name, the rest of the keyboard splits itself), **Chop** mode cuts one take into pieces
-  on a touch waveform — markers snap to hits, drag to move, per-chop keep / length, auto-fit to the slot. Everything
+- **Samples** (SLOOP 2.4) — USR1–4 user sample slots (a dropdown shows the picked one). Load audio files from phone
+  storage **or record straight from the mic** (camera / voice / raw inputs selectable) and drop the take into the
+  slot: **Chop** mode (the default) cuts one take into pieces on a touch waveform — the chop keys sit on a pinned
+  bottom strip, markers snap to hits, drag to move, per-chop keep / length, auto-fit to the slot; **Files** mode maps
+  each file to its note (root from the file name, the rest of the keyboard splits itself). Everything
   is normalized, resampled to 22050 Hz and encoded to IMA ADPCM in-app, then written to the FM-1 over the editor
   protocol with progress — ready to play via SAMPLE on a track.
 - **Mixer** — four vertical channel strips with faders, Mute and Edit.

@@ -16,6 +16,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -23,7 +26,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,6 +36,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FolderOpen
@@ -54,6 +57,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -67,12 +71,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
 import com.sloop.go.R
@@ -104,6 +111,7 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
     }
     val ed = vm.samples
     val ctl = vm.controller
+    val cs = MaterialTheme.colorScheme
     val ctx = LocalContext.current
     val smp = state.smp
     val nslots = smp?.nslots ?: 4
@@ -213,35 +221,38 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
 
     var confirm by remember { mutableStateOf<Triple<String, String, () -> Unit>?>(null) }
 
-    LazyColumn(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
         item { ScreenHeader("Samples", state, NAV_INSET) }
 
-        // ---- 1: the slot ----
+        // ---- 1: slot + send ----
         item {
             Card(Modifier.fillMaxWidth().padding(8.dp)) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("USR slot", style = MaterialTheme.typography.titleSmall)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        for (k in 0 until nslots) {
-                            val s = smp?.slots?.getOrNull(k)
-                            FilterChip(selected = ed.slot == k, onClick = { ed.slot = k },
-                                label = {
-                                    Text("USR${k + 1}  " +
-                                        (if (s != null && s.zones > 0)
-                                            "${s.name.ifBlank { "—" }} · ${s.zones}z · ${s.kib} KiB"
-                                        else "empty"))
-                                })
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val cur = smp?.slots?.getOrNull(ed.slot)
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        var slotMenu by remember { mutableStateOf(false) }
+                        Box(Modifier.weight(1f)) {
+                            OutlinedButton(onClick = { slotMenu = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text("USR${ed.slot + 1} ▾  " +
+                                    (if (cur != null && cur.zones > 0)
+                                        "${cur.name.ifBlank { "—" }} · ${cur.zones}z · ${cur.kib} KiB"
+                                    else "empty"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            DropdownMenu(expanded = slotMenu, onDismissRequest = { slotMenu = false }) {
+                                for (k in 0 until nslots) {
+                                    val sl = smp?.slots?.getOrNull(k)
+                                    DropdownMenuItem(text = {
+                                        Text("USR${k + 1}  " +
+                                            (if (sl != null && sl.zones > 0)
+                                                "${sl.name.ifBlank { "—" }} · ${sl.zones}z · ${sl.kib} KiB"
+                                            else "empty"),
+                                            color = if (k == ed.slot) cs.primary else cs.onSurface)
+                                    }, onClick = { ed.slot = k; slotMenu = false })
+                                }
+                            }
                         }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        val cur = smp?.slots?.getOrNull(ed.slot)
-                        Text(
-                            if (cur != null && cur.zones > 0)
-                                "USR${ed.slot + 1} holds \"${cur.name}\" — sending replaces it"
-                            else "USR${ed.slot + 1} is free",
-                            Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                         TextButton(enabled = !ed.busy && cur != null && cur.zones > 0, onClick = {
                             confirm = Triple("Erase USR${ed.slot + 1}?",
                                 "\"${cur?.name ?: ""}\" (${cur?.zones ?: 0} zones) will be removed from the device.") {
@@ -249,74 +260,10 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
                             }
                         }) { Text("Erase") }
                     }
-                }
-            }
-        }
-
-        // ---- 2: the sound ----
-        item {
-            Card(Modifier.fillMaxWidth().padding(8.dp)) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Sound", style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.weight(1f))
-                        FilterChip(selected = ed.mode == SamplesEditor.Mode.FILES,
-                            onClick = { ed.mode = SamplesEditor.Mode.FILES }, label = { Text("Files") })
-                        FilterChip(selected = ed.mode == SamplesEditor.Mode.CHOP,
-                            onClick = { ed.mode = SamplesEditor.Mode.CHOP }, label = { Text("Chop") })
-                    }
-                    Text(
-                        if (ed.mode == SamplesEditor.Mode.FILES)
-                            "One file per note: roots come from file names (\"kick_C3.wav\"), the rest of the keys split themselves. Recording goes in as a file too."
-                        else "One recording cut into pieces, one piece per key. Open a file or record, mark the chops, send. Longer than a slot is fine: keep the chops you want. On the wave: tap drops a marker, tap on one selects it, drag its dot to move it, hold to delete.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedButton(enabled = !ed.busy && !ed.recording, onClick = {
-                            pendingMode = ed.mode
-                            opener.launch(arrayOf("audio/*", "application/octet-stream"))
-                        }) {
-                            Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (ed.mode == SamplesEditor.Mode.FILES) "Add files" else "Open")
-                        }
-                        OutlinedButton(enabled = !ed.busy, onClick = { recordToggle() }) {
-                            Icon(if (ed.recording) Icons.Filled.Stop else Icons.Filled.Mic, null,
-                                Modifier.size(18.dp),
-                                tint = if (ed.recording) MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (ed.recording) "Stop" else "Record")
-                        }
-                        ed.mic?.let { cur ->
-                            MiniPicker("", mics.map { it.label to it }, cur,
-                                enabled = !ed.recording) { ed.mic = it }
-                        }
-                        if (ed.recording) {
-                            Box(Modifier.size(10.dp)
-                                .background(MaterialTheme.colorScheme.error, CircleShape))
-                            Text("%.1f s".format(ed.recSeconds),
-                                fontFamily = SloopFontFamily,
-                                style = MaterialTheme.typography.bodySmall)
-                            LinearProgressIndicator(progress = { ed.recLevel },
-                                modifier = Modifier.width(80.dp))
-                        }
-                    }
-
-                    if (ed.mode == SamplesEditor.Mode.FILES) FilesPane(ed)
-                    else ChopPane(ed)
-                }
-            }
-        }
-
-        // ---- 3: send and play ----
-        item {
-            Card(Modifier.fillMaxWidth().padding(8.dp)) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Send", style = MaterialTheme.typography.titleSmall)
+                    Text(if (cur != null && cur.zones > 0)
+                            "USR${ed.slot + 1} holds \"${cur.name}\" — sending replaces it"
+                        else "USR${ed.slot + 1} is free",
+                        style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                     Row(verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
@@ -374,6 +321,95 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
                         Text(it, style = MaterialTheme.typography.bodySmall,
                             color = if (ed.isError) MaterialTheme.colorScheme.error
                                 else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+        // ---- 2: the sound ----
+        item {
+            Card(Modifier.fillMaxWidth().padding(8.dp)) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Sound", style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.weight(1f))
+                        FilterChip(selected = ed.mode == SamplesEditor.Mode.CHOP,
+                            onClick = { ed.mode = SamplesEditor.Mode.CHOP }, label = { Text("Chop") })
+                        FilterChip(selected = ed.mode == SamplesEditor.Mode.FILES,
+                            onClick = { ed.mode = SamplesEditor.Mode.FILES }, label = { Text("Files") })
+                    }
+                    Text(
+                        if (ed.mode == SamplesEditor.Mode.FILES)
+                            "One file per note: roots come from file names (\"kick_C3.wav\"), the rest of the keys split themselves. Recording goes in as a file too."
+                        else "One recording cut into pieces, one piece per key. Open a file or record, mark the chops, send. Longer than a slot is fine: keep the chops you want. On the wave: tap drops a marker, tap on one selects it, drag its dot to move it, hold to delete.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(enabled = !ed.busy && !ed.recording, onClick = {
+                            pendingMode = ed.mode
+                            opener.launch(arrayOf("audio/*", "application/octet-stream"))
+                        }) {
+                            Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (ed.mode == SamplesEditor.Mode.FILES) "Add files" else "Open")
+                        }
+                        OutlinedButton(enabled = !ed.busy, onClick = { recordToggle() }) {
+                            Icon(if (ed.recording) Icons.Filled.Stop else Icons.Filled.Mic, null,
+                                Modifier.size(18.dp),
+                                tint = if (ed.recording) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (ed.recording) "Stop" else "Record")
+                        }
+                        ed.mic?.let { cur ->
+                            MiniPicker("", mics.map { it.label to it }, cur,
+                                enabled = !ed.recording) { ed.mic = it }
+                        }
+                        if (ed.recording) {
+                            Box(Modifier.size(10.dp)
+                                .background(MaterialTheme.colorScheme.error, CircleShape))
+                            Text("%.1f s".format(ed.recSeconds),
+                                fontFamily = SloopFontFamily,
+                                style = MaterialTheme.typography.bodySmall)
+                            LinearProgressIndicator(progress = { ed.recLevel },
+                                modifier = Modifier.width(80.dp))
+                        }
+                    }
+
+                    if (ed.mode == SamplesEditor.Mode.FILES) FilesPane(ed)
+                    else ChopPane(ed)
+                }
+            }
+        }
+        }
+
+
+        // ---- pinned footer: the chops' keys, drum-synth style; only while a sample is loaded ----
+        if (ed.mode == SamplesEditor.Mode.CHOP) ed.src?.let { x ->
+            val chops = ed.chops
+            if (chops.isNotEmpty()) {
+                val keyOf = HashMap<Int, Int>()
+                ed.usedChops.forEachIndexed { j, c -> if (ed.chopMode == 0) keyOf[c.i] = Smp.whiteKey(ed.key0, j) }
+                Surface(color = cs.surface, tonalElevation = 3.dp, shadowElevation = 12.dp) {
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        chops.forEach { c ->
+                            val on = c.i == ed.sel
+                            Box(Modifier.width(64.dp).height(48.dp).clip(RoundedCornerShape(10.dp))
+                                .background(if (on) cs.primary else cs.surfaceVariant)
+                                .then(if (on) Modifier else Modifier.border(1.dp, cs.onSurfaceVariant, RoundedCornerShape(10.dp)))
+                                .clickable { ed.sel = c.i; Audio.play(x, c.start, c.end) },
+                                contentAlignment = Alignment.Center) {
+                                Text("${c.i + 1}" + (keyOf[c.i]?.let { " ${Smp.noteName(it)}" } ?: ""),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    color = if (on) cs.onPrimary
+                                        else if (c.off) cs.onSurfaceVariant else cs.onSurface,
+                                    fontSize = 11.sp, lineHeight = 12.sp, maxLines = 2)
+                            }
+                        }
                     }
                 }
             }
@@ -485,6 +521,9 @@ private fun ChopPane(ed: SamplesEditor) {
         //      drag a marker's handle = move it, long-press a marker = delete ----
         var dragMark by remember { mutableIntStateOf(-1) }
         val markPaint = remember { Paint().apply { textSize = 26f; this.typeface = typeface } }
+        // the key each kept chop lands on: left to right on the wave, like the footer's pads
+        val keyOf = HashMap<Int, Int>()
+        used.forEachIndexed { j, c -> if (ed.chopMode == 0) keyOf[c.i] = Smp.whiteKey(ed.key0, j) }
         Box(Modifier.fillMaxWidth()) {
             Canvas(Modifier.fillMaxWidth().height(140.dp)
                 .pointerInput(x) {
@@ -568,74 +607,20 @@ private fun ChopPane(ed: SamplesEditor) {
                     drawCircle(col, radius = if (m.index == ed.sel) 11f else 8f,
                         center = Offset(mx, 16f))
                 }
-                markPaint.color = android.graphics.Color.WHITE
                 for (m in ed.marks.withIndex()) {
-                    drawContext.canvas.nativeCanvas.drawText("${m.index + 1}",
-                        m.value.start * w / x.size + 4f, 22f, markPaint)
+                    val tx = m.value.start * w / x.size + 4f
+                    markPaint.color = android.graphics.Color.WHITE
+                    drawContext.canvas.nativeCanvas.drawText("${m.index + 1}", tx, 22f, markPaint)
+                    keyOf[m.index]?.let { k ->
+                        markPaint.color = (if (m.index == ed.sel) cs.primary else cs.onSurfaceVariant).toArgb()
+                        drawContext.canvas.nativeCanvas.drawText(Smp.noteName(k), tx, 46f, markPaint)
+                    }
                 }
             }
         }
 
-        // ---- mark tools ----
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = {
-                ed.nov?.let { ed.setMarkers(Smp.chopHits(x, it, ed.sens).toList()) }
-            }) { Text("Chop on hits") }
-            Text("sens", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
-            Slider(value = ed.sens.toFloat(), onValueChange = { ed.sens = it.toInt() },
-                valueRange = 1f..10f, steps = 8, modifier = Modifier.weight(1f))
-            Text("${ed.sens}", fontFamily = SloopFontFamily,
-                style = MaterialTheme.typography.bodySmall)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            var bpm by remember { mutableStateOf("90") }
-            var div by remember { mutableStateOf(1.0) }
-            var parts by remember { mutableIntStateOf(8) }
-            val region = if (ed.marks.size >= 2) ed.marks.first().start to ed.marks.last().start
-                else 0 to x.size
-            OutlinedButton(onClick = {
-                ed.setMarkers(Smp.chopGrid(region.first, region.second,
-                    bpm.toDoubleOrNull()?.coerceAtLeast(40.0) ?: 90.0, div).toList())
-            }) { Text("Grid") }
-            OutlinedTextField(value = bpm, onValueChange = { bpm = it.filter { c -> c.isDigit() || c == '.' }.take(5) },
-                modifier = Modifier.width(72.dp), singleLine = true,
-                label = { Text("BPM") })
-            MiniPicker("div", listOf("1 bar" to 4.0, "1/2" to 2.0, "1/4" to 1.0,
-                "1/8" to 0.5, "1/16" to 0.25), div) { div = it }
-            OutlinedButton(onClick = {
-                ed.setMarkers(Smp.chopEqual(region.first, region.second, parts).toList())
-            }) { Text("Equal") }
-            MiniPicker("n", listOf(2, 3, 4, 6, 8, 12, 16).map { "$it" to it }, parts) { parts = it }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("First key", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
-            MiniPicker("", (36..84).map { Smp.noteName(it) to it }, ed.key0) { ed.key0 = it }
-            MiniPicker("", listOf("one key per chop" to 0, "selected on all keys" to 1),
-                ed.chopMode) { ed.chopMode = it }
-            MiniPicker("max len", listOf("—" to 0f, "0.25 s" to 0.25f, "0.5 s" to 0.5f,
-                "1 s" to 1f, "2 s" to 2f), ed.maxLen) { ed.maxLen = it }
-        }
-
-        // ---- the chops ----
-        if (chops.isNotEmpty()) {
-            val keyOf = HashMap<Int, Int>()
-            used.forEach { c -> if (ed.chopMode == 0) keyOf[c.i] = minOf(127, ed.key0 + used.indexOf(c)) }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                chops.forEach { c ->
-                    FilterChip(selected = c.i == ed.sel,
-                        onClick = { ed.sel = c.i; Audio.play(x, c.start, c.end) },
-                        label = {
-                            Text("${c.i + 1}${keyOf[c.i]?.let { " ${Smp.noteName(it)}" } ?: if (c.off) " —" else ""}",
-                                color = if (c.off) cs.onSurfaceVariant else cs.onSurface)
-                        })
-                }
-            }
-            val c = chops.getOrNull(ed.sel)
-            if (c != null) {
+        val c = chops.getOrNull(ed.sel)
+        if (c != null) {
                 Row(verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Chop ${c.i + 1}", style = MaterialTheme.typography.bodySmall,
@@ -678,6 +663,51 @@ private fun ChopPane(ed: SamplesEditor) {
                     TextButton(onClick = { ed.moveMark(c.i, c.start + step(50.0)) }) { Text("»") }
                 }
             }
+        // ---- mark tools ----
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                ed.nov?.let { ed.setMarkers(Smp.chopHits(x, it, ed.sens).toList()) }
+            }) { Text("Chop on hits") }
+            Text("sens", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
+            Slider(value = ed.sens.toFloat(), onValueChange = { ed.sens = it.toInt() },
+                valueRange = 1f..10f, steps = 8, modifier = Modifier.weight(1f))
+            Text("${ed.sens}", fontFamily = SloopFontFamily,
+                style = MaterialTheme.typography.bodySmall)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            var bpm by remember { mutableStateOf("90") }
+            var div by remember { mutableStateOf(1.0) }
+            var parts by remember { mutableIntStateOf(8) }
+            val region = if (ed.marks.size >= 2) ed.marks.first().start to ed.marks.last().start
+                else 0 to x.size
+            OutlinedButton(onClick = {
+                ed.setMarkers(Smp.chopGrid(region.first, region.second,
+                    bpm.toDoubleOrNull()?.coerceAtLeast(40.0) ?: 90.0, div).toList())
+            }) { Text("Grid") }
+            OutlinedTextField(value = bpm, onValueChange = { bpm = it.filter { c -> c.isDigit() || c == '.' }.take(5) },
+                modifier = Modifier.width(72.dp), singleLine = true,
+                label = { Text("BPM") })
+            MiniPicker("div", listOf("1 bar" to 4.0, "1/2" to 2.0, "1/4" to 1.0,
+                "1/8" to 0.5, "1/16" to 0.25), div) { div = it }
+            OutlinedButton(onClick = {
+                ed.setMarkers(Smp.chopEqual(region.first, region.second, parts).toList())
+            }) { Text("Equal") }
+            MiniPicker("n", listOf(2, 3, 4, 6, 8, 12, 16).map { "$it" to it }, parts) { parts = it }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("First key", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
+            MiniPicker("", (36..84).filter(Smp::isWhiteKey).map { Smp.noteName(it) to it },
+                ed.key0) { ed.key0 = it }
+            MiniPicker("", listOf("one key per chop" to 0, "selected on all keys" to 1),
+                ed.chopMode) { ed.chopMode = it }
+            MiniPicker("max len", listOf("—" to 0f, "0.25 s" to 0.25f, "0.5 s" to 0.5f,
+                "1 s" to 1f, "2 s" to 2f), ed.maxLen) { ed.maxLen = it }
+        }
+
+        if (chops.isNotEmpty()) {
             // meter + fit
             val over = used.fold(0) { a, q -> a + (q.len + 1) / 2 } > Smp.MAX_DATA
             Row(verticalAlignment = Alignment.CenterVertically,

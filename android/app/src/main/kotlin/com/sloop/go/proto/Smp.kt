@@ -408,6 +408,23 @@ object Smp {
     private val NOTE_NAMES = arrayOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
     fun noteName(n: Int): String = NOTE_NAMES[((n % 12) + 12) % 12] + (n / 12 - 1)
 
+    /* chops are mostly drums and drum kits live on the white keys: j-th white key at-or-after k0
+       (k0 itself snaps up to the next white key if it lands on a black one) */
+    private val WHITE = intArrayOf(0, 2, 4, 5, 7, 9, 11)
+    fun isWhiteKey(k: Int): Boolean = ((k % 12) + 12) % 12 in WHITE
+    fun whiteKey(k0: Int, j: Int): Int {
+        var oct = k0.floorDiv(12)
+        var i = WHITE.indexOfFirst { it >= ((k0 % 12) + 12) % 12 }
+        if (i < 0) { i = 0; oct++ }
+        var n = oct * 12 + WHITE[i]
+        repeat(j.coerceAtLeast(0)) {
+            i++
+            if (i == WHITE.size) { i = 0; oct++ }
+            n = oct * 12 + WHITE[i]
+        }
+        return min(127, n)
+    }
+
     /* chops -> slot zones (one gain for all: their levels are kept). mode 0: one key each from key0;
        mode 1: the chop sel alone over the whole keyboard */
     fun chopZones(x: DoubleArray, chops: List<Chop>, key0: Int, mode: Int = 0, sel: Int = 0): List<ZoneIn> {
@@ -425,7 +442,7 @@ object Smp {
                 if (i >= n - fo) g = min(g, (n - i).toDouble() / fo)
                 s[i] = max(-32768.0, min(32767.0, truncate(x[c.start + i] / pk * 30000 * g))).toInt().toShort()
             }
-            val key = min(127, key0 + (if (mode == 1) 0 else j))
+            val key = if (mode == 1) key0 else whiteKey(key0, j)
             val num = if (c.i >= 0) c.i else if (mode == 1) sel else j
             ZoneIn("CHOP${(num + 1).toString().padStart(2, '0')}_${noteName(key)}.wav", s,
                 key, if (mode == 1) 0 else key, if (mode == 1) 127 else key)

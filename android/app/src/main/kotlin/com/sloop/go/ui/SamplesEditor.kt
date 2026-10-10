@@ -15,7 +15,7 @@ import com.sloop.go.proto.Smp
 class SamplesEditor {
     enum class Mode { FILES, CHOP }
 
-    var mode by mutableStateOf(Mode.FILES)
+    var mode by mutableStateOf(Mode.CHOP)
     var slot by mutableIntStateOf(0)
     var name by mutableStateOf("")
     var files by mutableStateOf<List<Smp.ZoneIn>>(emptyList())
@@ -52,7 +52,7 @@ class SamplesEditor {
     var nov by mutableStateOf<Smp.Novelty?>(null)
     var marks by mutableStateOf<List<Smp.Mark>>(emptyList())
     var sel by mutableIntStateOf(-1)
-    var key0 by mutableIntStateOf(60)
+    var key0 by mutableIntStateOf(36)
     var chopMode by mutableIntStateOf(0)            // 0: one key per chop, 1: the selected chop everywhere
     var maxLen by mutableFloatStateOf(0f)           // seconds; 0 = up to the next marker
     var sens by mutableIntStateOf(5)

@@ -127,9 +127,9 @@ object Audio {
     /** Mics to offer: source presets (voice call, camera back, raw) + the inputs the phone reports. */
     fun mics(ctx: Context): List<MicOption> {
         val out = mutableListOf(
+            MicOption("Camera back", MediaRecorder.AudioSource.CAMCORDER),
             MicOption("Mic", MediaRecorder.AudioSource.MIC),
             MicOption("Voice call", MediaRecorder.AudioSource.VOICE_COMMUNICATION),
-            MicOption("Camera back", MediaRecorder.AudioSource.CAMCORDER),
             MicOption("Raw", MediaRecorder.AudioSource.UNPROCESSED),
         )
         val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
