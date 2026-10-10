@@ -65,7 +65,10 @@ class SloopViewModel(app: Application) : AndroidViewModel(app) {
                     Update.Available(r)
                 } else Update.UpToDate
             } catch (e: Exception) {
-                if (manual) Update.Failed(e.message ?: e.javaClass.simpleName) else Update.None
+                if (manual) Update.Failed(
+                    if (e is java.net.UnknownHostException || e is java.net.SocketTimeoutException)
+                        "No internet connection (cannot reach github.com)"
+                    else e.message ?: e.javaClass.simpleName) else Update.None
             }
         }
     }
