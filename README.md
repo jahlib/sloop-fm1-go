@@ -4,6 +4,20 @@ A native Android app (Kotlin + Jetpack Compose) for the **M-VAVE FM-1** running 
 It talks to the device directly over USB-MIDI through Android's `MidiManager` — no WebView, no JavaScript bridge —
 so edits reach the FM-1 immediately.
 
+## Install on your phone
+
+**⬇ [Download sloop_go_1.6.6.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.6.6/sloop_go_1.6.6.apk)**
+— other versions live on the [Releases](https://github.com/jahlib/sloop-fm1-go/releases) page.
+
+1. Open the link **on the phone** and download the file. The browser may warn that APKs "might be harmful" —
+   this is a self-signed dev build, so the warning is expected; keep the file.
+2. Tap the downloaded file and allow installing apps from this source when Android asks.
+3. **Google Play Protect will flag the app** — it is a development build signed with a debug key, not a Play Store
+   release, so the scanner does not know it. Tap **"Install anyway"** (or **More details → Install anyway**) if you
+   trust it; if you do not, simply do not install — building the APK from this repository yourself gives you the
+   same app.
+4. Connect the FM-1 to the phone over USB, open **Sloop Go**, tap **Find MIDI device** and grant USB access.
+
 <table>
   <tr>
     <td><img src="screenshots/1.png" alt="Sound editor" /></td>

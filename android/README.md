@@ -100,8 +100,9 @@ cd android
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`. Or copy it to the phone and tap it
 (allow "install from unknown sources"). Current `applicationId` is `com.sloop.go`, `versionCode`
 is 20 and `versionName` is 1.6.6. For each major update increment `versionCode` and update
-`versionName` in `android/app/build.gradle`; keep the same package and signing key to install
-updates over existing installations with `adb install -r`.
+`versionName` in `android/app/build.gradle`, and update the APK link in the root `README.md`
+to the new release (`releases/download/<tag>/sloop_go_<version>.apk`); keep the same package
+and signing key to install updates over existing installations with `adb install -r`.
 
 > `./gradlew assembleRelease` is signed with the debug key for convenience. Replace the signing
 > config before any real distribution.
