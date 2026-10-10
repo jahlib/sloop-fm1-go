@@ -27,6 +27,8 @@ so edits reach the FM-1 immediately.
 **⬇ [Download sloop_go_1.6.7.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.6.7/sloop_go_1.6.7.apk)**
 — other versions live on the [Releases](https://github.com/jahlib/sloop-fm1-go/releases) page.
 
+0. You need an **M-VAVE FM-1** device with the latest [**SLOOP** firmware](https://github.com/isod89/sloop-fm1)
+   already installed — the app is only an editor for it and does nothing without the device.
 1. Open the link **on the phone** and download the file. The browser may warn that APKs "might be harmful" —
    this is a self-signed dev build, so the warning is expected; keep the file.
 2. Tap the downloaded file and allow installing apps from this source when Android asks.
