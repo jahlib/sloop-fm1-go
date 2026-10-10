@@ -17,8 +17,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -391,14 +389,13 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
             val chops = ed.chops
             if (chops.isNotEmpty()) {
                 val keyOf = HashMap<Int, Int>()
-                ed.usedChops.forEachIndexed { j, c -> if (ed.chopMode == 0) keyOf[c.i] = Smp.whiteKey(ed.key0, j) }
+                ed.usedChops.forEach { c -> if (ed.chopMode == 0) keyOf[c.i] = minOf(127, ed.key0 + ed.usedChops.indexOf(c)) }
                 Surface(color = cs.surface, tonalElevation = 3.dp, shadowElevation = 12.dp) {
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        chops.forEach { c ->
+                        chops.take(Smp.Chop.MAX).forEach { c ->
                             val on = c.i == ed.sel
-                            Box(Modifier.width(64.dp).height(48.dp).clip(RoundedCornerShape(10.dp))
+                            Box(Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(10.dp))
                                 .background(if (on) cs.primary else cs.surfaceVariant)
                                 .then(if (on) Modifier else Modifier.border(1.dp, cs.onSurfaceVariant, RoundedCornerShape(10.dp)))
                                 .clickable { ed.sel = c.i; Audio.play(x, c.start, c.end) },
@@ -523,7 +520,7 @@ private fun ChopPane(ed: SamplesEditor) {
         val markPaint = remember { Paint().apply { textSize = 26f; this.typeface = typeface } }
         // the key each kept chop lands on: left to right on the wave, like the footer's pads
         val keyOf = HashMap<Int, Int>()
-        used.forEachIndexed { j, c -> if (ed.chopMode == 0) keyOf[c.i] = Smp.whiteKey(ed.key0, j) }
+        used.forEachIndexed { j, c -> if (ed.chopMode == 0) keyOf[c.i] = minOf(127, ed.key0 + j) }
         Box(Modifier.fillMaxWidth()) {
             Canvas(Modifier.fillMaxWidth().height(140.dp)
                 .pointerInput(x) {
@@ -699,8 +696,7 @@ private fun ChopPane(ed: SamplesEditor) {
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("First key", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
-            MiniPicker("", (36..84).filter(Smp::isWhiteKey).map { Smp.noteName(it) to it },
-                ed.key0) { ed.key0 = it }
+            MiniPicker("", (36..84).map { Smp.noteName(it) to it }, ed.key0) { ed.key0 = it }
             MiniPicker("", listOf("one key per chop" to 0, "selected on all keys" to 1),
                 ed.chopMode) { ed.chopMode = it }
             MiniPicker("max len", listOf("—" to 0f, "0.25 s" to 0.25f, "0.5 s" to 0.5f,

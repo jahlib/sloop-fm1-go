@@ -73,8 +73,11 @@ class SamplesEditor {
     /** Samples (not bytes) the kept chops occupy. */
     val usedSamples: Int get() = usedChops.fold(0) { a, c -> a + c.len }
 
+    private var rr = 0                              // round-robin slot: adds past MAX recreate marks in turn
+
     fun setMarkers(m: List<Int>) {
         val x = src ?: return
+        rr = 0
         val was = marks.associateBy({ it.start }, { it })
         marks = m.map { v ->
             val p = v.coerceIn(0, x.size - 1)
@@ -88,7 +91,16 @@ class SamplesEditor {
         val x = src ?: return
         val near = marks.indexOfFirst { kotlin.math.abs(it.start - pos) < 0.03 * Smp.RATE }
         val m = marks.map { it.start }.toMutableList()
-        if (near >= 0) m[near] = pos else m.add(pos)
+        if (near >= 0) m[near] = pos
+        else if (m.size < Smp.Chop.MAX) m.add(pos)
+        else {
+            val i = rr % m.size                     /* full: the tap recreates mark 1, then 2, ... */
+            m[i] = pos
+            setMarkers(m)
+            rr = i + 1
+            sel = marks.indexOfFirst { it.start == pos.coerceIn(0, x.size - 1) }
+            return
+        }
         setMarkers(m)
         sel = marks.indexOfFirst { it.start == pos.coerceIn(0, x.size - 1) }
     }
