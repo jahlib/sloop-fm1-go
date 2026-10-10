@@ -169,7 +169,7 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
                 Tab.PARAMS -> ParamsScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.SEQ -> SequencerScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.FM6 -> Fm6Screen(vm, state, onDevice = { tab = Tab.SETTINGS })
-                Tab.SAMPLES -> SamplesScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
+                Tab.SAMPLES -> SamplesScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.DRUMSYNTH -> DrumSynthScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.SONG -> SongScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.MIDI -> MidiBrowserScreen(vm, state, openSequencer = { tab = Tab.SEQ })
@@ -178,7 +178,8 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
             }
             // the sequencer embeds the cluster in its control row only once the device info is loaded
             val ready = state.link == Link.READY && state.info != null
-            val seqHasNav = ready && (tab == Tab.SEQ || (tab == Tab.DRUMSYNTH && (state.info?.proto ?: 0) >= 10))
+            val seqHasNav = ready && (tab == Tab.SEQ || tab == Tab.SAMPLES ||
+                (tab == Tab.DRUMSYNTH && (state.info?.proto ?: 0) >= 10))
             if (!seqHasNav) {
                 Surface(Modifier.align(Alignment.TopStart).padding(6.dp),
                     shape = RoundedCornerShape(16.dp),

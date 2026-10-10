@@ -23,8 +23,9 @@ class SamplesEditor {
     var progress by mutableFloatStateOf(-1f)     // <0: no upload in flight
     var message by mutableStateOf<String?>(null)
     var isError by mutableStateOf(false)
+    var said by mutableIntStateOf(0)              // bumps on every say(): drives the auto-hide timer
 
-    fun say(text: String, error: Boolean = false) { message = text; isError = error }
+    fun say(text: String, error: Boolean = false) { message = text; isError = error; said++ }
 
     // ---- recording (shared by both modes) ----
     val recorder = Audio.Recorder()

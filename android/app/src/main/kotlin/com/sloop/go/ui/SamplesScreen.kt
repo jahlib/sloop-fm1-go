@@ -17,13 +17,17 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -75,6 +79,8 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -102,7 +108,7 @@ private fun secs(n: Int) = "%.2f s".format(n.toDouble() / Smp.RATE)
 
 /** USR1..4 sample slots: files (one zone per file) or one recording chopped into keys. */
 @Composable
-fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
+fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, nav: @Composable () -> Unit) {
     if (state.link != Link.READY || state.info == null) {
         NotReady("Samples", state, onDevice)
         return
@@ -216,171 +222,164 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) 
         }
     }
     DisposableEffect(Unit) { onDispose { Audio.stop(); if (ed.recording) ed.stopRecording() } }
+    LaunchedEffect(ed.said) { if (ed.message != null) { delay(5000); ed.message = null } }
 
     var confirm by remember { mutableStateOf<Triple<String, String, () -> Unit>?>(null) }
 
-    Column(Modifier.fillMaxSize()) {
+    val tight = PaddingValues(horizontal = 10.dp)
+    val focus = LocalFocusManager.current
+    val cur = smp?.slots?.getOrNull(ed.slot)
+
+    Column(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { focus.clearFocus() } }) {
+        // ---- pinned header: nav, slot pick with a short info, name, send, play on track ----
+        Row(Modifier.fillMaxWidth().background(cs.surface).horizontalScroll(rememberScrollState())
+            .padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            nav()
+            Text("Samples", style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold, maxLines = 1)
+            var slotMenu by remember { mutableStateOf(false) }
+            Box {
+                Text("U${ed.slot + 1} ▾" + (if (cur != null && cur.zones > 0)
+                        " ${cur.name.ifBlank { "—" }} · ${cur.zones}z" else ""),
+                    Modifier.clickable { slotMenu = true }
+                        .padding(horizontal = 6.dp, vertical = 10.dp),
+                    color = cs.primary, style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold, maxLines = 1)
+                DropdownMenu(expanded = slotMenu, onDismissRequest = { slotMenu = false }) {
+                    for (k in 0 until nslots) {
+                        val sl = smp?.slots?.getOrNull(k)
+                        DropdownMenuItem(text = {
+                            Text("USR${k + 1}  " +
+                                (if (sl != null && sl.zones > 0)
+                                    "${sl.name.ifBlank { "—" }} · ${sl.zones}z · ${sl.kib} KiB"
+                                else "empty"),
+                                color = if (k == ed.slot) cs.primary else cs.onSurface)
+                        }, onClick = { ed.slot = k; slotMenu = false })
+                    }
+                    if (cur != null && cur.zones > 0) {
+                        HorizontalDivider()
+                        DropdownMenuItem(text = { Text("Erase USR${ed.slot + 1}", color = cs.error) },
+                            onClick = {
+                                slotMenu = false
+                                confirm = Triple("Erase USR${ed.slot + 1}?",
+                                    "\"${cur.name}\" (${cur.zones} zones) will be removed from the device.") {
+                                    op { if (ctl.smpErase(ed.slot) == 0) ed.say("USR${ed.slot + 1} erased") }
+                                }
+                            })
+                    }
+                }
+            }
+            OutlinedTextField(value = ed.name, singleLine = true,
+                onValueChange = { v -> ed.name = v.uppercase().filter { it.code in 32..126 }.take(8) },
+                label = { Text("NAME") }, textStyle = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.width(104.dp))
+            val ready = !ed.busy && ed.name.isNotBlank() && when (ed.mode) {
+                SamplesEditor.Mode.FILES -> ed.files.isNotEmpty() &&
+                    ed.files.sumOf { (it.s.size + 1) / 2 } <= Smp.MAX_DATA
+                SamplesEditor.Mode.CHOP -> ed.usedChops.isNotEmpty() &&
+                    ed.usedSamples <= Smp.MAX_DATA * 2
+            }
+            Button(enabled = ready, modifier = Modifier.height(32.dp), contentPadding = tight,
+                onClick = {
+                    val c2 = smp?.slots?.getOrNull(ed.slot)
+                    val doSend: () -> Unit = {
+                        op {
+                            ed.progress = 0f
+                            val zones = if (ed.mode == SamplesEditor.Mode.FILES) ed.files
+                                else Smp.chopZones(ed.src!!, ed.chops, ed.key0,
+                                    ed.chopMode, ed.sel.coerceAtLeast(0))
+                            try {
+                                ctl.smpUpload(ed.slot, ed.name, zones) { ed.progress = it }
+                                ed.say("USR${ed.slot + 1} written")
+                            } finally { ed.progress = -1f }
+                        }
+                    }
+                    if (c2 != null && c2.zones > 0)
+                        confirm = Triple("Replace USR${ed.slot + 1}?",
+                            "\"${c2.name}\" will be replaced by \"${ed.name}\".", doSend)
+                    else doSend()
+                }) { Text("Send") }
+            Text("Play on", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
+            for (t in 0 until minOf(3, state.info.ntrk)) {
+                OutlinedButton(enabled = !ed.busy && cur != null && cur.zones > 0,
+                    modifier = Modifier.height(32.dp), contentPadding = tight,
+                    onClick = {
+                        op {
+                            ctl.smpUseOn(t, ed.slot)
+                            ed.say("Track ${t + 1}: SAMPLE, SET = USR${ed.slot + 1}")
+                        }
+                    }) { Text("${t + 1}") }
+            }
+        }
+
+        if (ed.busy || ed.progress >= 0f || ed.message != null)
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
+                if (ed.progress >= 0f)
+                    LinearProgressIndicator(progress = { ed.progress }, Modifier.fillMaxWidth())
+                else if (ed.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                ed.message?.let {
+                    Text(it, color = if (ed.isError) cs.error else cs.primary,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
+        // ---- the scrolling middle: one Sound card ----
         LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
-        item { ScreenHeader("Samples", state, NAV_INSET) }
-
-        // ---- 1: slot + send ----
-        item {
-            Card(Modifier.fillMaxWidth().padding(8.dp)) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val cur = smp?.slots?.getOrNull(ed.slot)
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        var slotMenu by remember { mutableStateOf(false) }
-                        Box(Modifier.weight(1f)) {
-                            OutlinedButton(onClick = { slotMenu = true }, modifier = Modifier.fillMaxWidth()) {
-                                Text("USR${ed.slot + 1} ▾  " +
-                                    (if (cur != null && cur.zones > 0)
-                                        "${cur.name.ifBlank { "—" }} · ${cur.zones}z · ${cur.kib} KiB"
-                                    else "empty"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            item {
+                Card(Modifier.fillMaxWidth().padding(8.dp)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Sound", style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.weight(1f))
+                            FilterChip(selected = ed.mode == SamplesEditor.Mode.CHOP,
+                                onClick = { ed.mode = SamplesEditor.Mode.CHOP },
+                                label = { Text("Chop") })
+                            FilterChip(selected = ed.mode == SamplesEditor.Mode.FILES,
+                                onClick = { ed.mode = SamplesEditor.Mode.FILES },
+                                label = { Text("Files") })
+                        }
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            OutlinedButton(enabled = !ed.busy && !ed.recording, onClick = {
+                                pendingMode = ed.mode
+                                opener.launch(arrayOf("audio/*", "application/octet-stream"))
+                            }) {
+                                Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (ed.mode == SamplesEditor.Mode.FILES) "Add files" else "Open")
                             }
-                            DropdownMenu(expanded = slotMenu, onDismissRequest = { slotMenu = false }) {
-                                for (k in 0 until nslots) {
-                                    val sl = smp?.slots?.getOrNull(k)
-                                    DropdownMenuItem(text = {
-                                        Text("USR${k + 1}  " +
-                                            (if (sl != null && sl.zones > 0)
-                                                "${sl.name.ifBlank { "—" }} · ${sl.zones}z · ${sl.kib} KiB"
-                                            else "empty"),
-                                            color = if (k == ed.slot) cs.primary else cs.onSurface)
-                                    }, onClick = { ed.slot = k; slotMenu = false })
+                            OutlinedButton(enabled = !ed.busy, onClick = { recordToggle() }) {
+                                Icon(if (ed.recording) Icons.Filled.Stop else Icons.Filled.Mic, null,
+                                    Modifier.size(18.dp),
+                                    tint = if (ed.recording) cs.error else cs.primary)
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (ed.recording) "Stop" else "Record")
+                            }
+                            ed.mic?.let { cur ->
+                                MiniPicker("", mics.map { it.label to it }, cur,
+                                    enabled = !ed.recording) { ed.mic = it }
+                            }
+                            if (ed.recording) {
+                                Row(verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Box(Modifier.size(10.dp).background(cs.error, CircleShape))
+                                    Text("%.1f s".format(ed.recSeconds), fontFamily = SloopFontFamily,
+                                        style = MaterialTheme.typography.bodySmall)
+                                    LinearProgressIndicator(progress = { ed.recLevel },
+                                        modifier = Modifier.width(64.dp))
                                 }
                             }
                         }
-                        TextButton(enabled = !ed.busy && cur != null && cur.zones > 0, onClick = {
-                            confirm = Triple("Erase USR${ed.slot + 1}?",
-                                "\"${cur?.name ?: ""}\" (${cur?.zones ?: 0} zones) will be removed from the device.") {
-                                op { if (ctl.smpErase(ed.slot) == 0) ed.say("USR${ed.slot + 1} erased") }
-                            }
-                        }) { Text("Erase") }
-                    }
-                    Text(if (cur != null && cur.zones > 0)
-                            "USR${ed.slot + 1} holds \"${cur.name}\" — sending replaces it"
-                        else "USR${ed.slot + 1} is free",
-                        style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = ed.name,
-                            onValueChange = { v ->
-                                ed.name = v.uppercase().filter { it.code in 32..126 }.take(8)
-                            },
-                            label = { Text("Name (8 chars)") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f))
-                        val ready = !ed.busy && ed.name.isNotBlank() && when (ed.mode) {
-                            SamplesEditor.Mode.FILES -> ed.files.isNotEmpty() &&
-                                ed.files.sumOf { (it.s.size + 1) / 2 } <= Smp.MAX_DATA
-                            SamplesEditor.Mode.CHOP -> ed.usedChops.isNotEmpty() &&
-                                ed.usedSamples <= Smp.MAX_DATA * 2
-                        }
-                        Button(enabled = ready, onClick = {
-                            val cur = smp?.slots?.getOrNull(ed.slot)
-                            val doSend: () -> Unit = {
-                                op {
-                                    ed.progress = 0f
-                                    val zones = if (ed.mode == SamplesEditor.Mode.FILES) ed.files
-                                        else Smp.chopZones(ed.src!!, ed.chops, ed.key0,
-                                            ed.chopMode, ed.sel.coerceAtLeast(0))
-                                    try {
-                                        ctl.smpUpload(ed.slot, ed.name, zones) { ed.progress = it }
-                                        ed.say("USR${ed.slot + 1} written")
-                                    } finally { ed.progress = -1f }
-                                }
-                            }
-                            if (cur != null && cur.zones > 0)
-                                confirm = Triple("Replace USR${ed.slot + 1}?",
-                                    "\"${cur.name}\" will be replaced by \"${ed.name}\".", doSend)
-                            else doSend()
-                        }) { Text("Send to USR${ed.slot + 1}") }
-                    }
-                    if (ed.progress >= 0f)
-                        LinearProgressIndicator(progress = { ed.progress }, Modifier.fillMaxWidth())
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Play on track", style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        val cur = smp?.slots?.getOrNull(ed.slot)
-                        for (t in 0 until minOf(3, state.info.ntrk)) {
-                            OutlinedButton(enabled = !ed.busy && cur != null && cur.zones > 0,
-                                onClick = {
-                                    op {
-                                        ctl.smpUseOn(t, ed.slot)
-                                        ed.say("Track ${t + 1}: SAMPLE, SET = USR${ed.slot + 1}")
-                                    }
-                                }) { Text("${t + 1}") }
-                        }
-                    }
-                    ed.message?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall,
-                            color = if (ed.isError) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (ed.mode == SamplesEditor.Mode.FILES)
+                                "One file per note — the root comes from each file name."
+                            else "On the wave: tap adds a marker, tap a marker selects it, drag moves it, hold deletes",
+                            style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
+                        if (ed.mode == SamplesEditor.Mode.FILES) FilesPane(ed) else ChopPane(ed)
                     }
                 }
             }
-        }
-        // ---- 2: the sound ----
-        item {
-            Card(Modifier.fillMaxWidth().padding(8.dp)) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Sound", style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.weight(1f))
-                        FilterChip(selected = ed.mode == SamplesEditor.Mode.CHOP,
-                            onClick = { ed.mode = SamplesEditor.Mode.CHOP }, label = { Text("Chop") })
-                        FilterChip(selected = ed.mode == SamplesEditor.Mode.FILES,
-                            onClick = { ed.mode = SamplesEditor.Mode.FILES }, label = { Text("Files") })
-                    }
-                    Text(
-                        if (ed.mode == SamplesEditor.Mode.FILES)
-                            "One file per note: roots come from file names (\"kick_C3.wav\"), the rest of the keys split themselves. Recording goes in as a file too."
-                        else "One recording cut into pieces, one piece per key. Open a file or record, mark the chops, send. Longer than a slot is fine: keep the chops you want. On the wave: tap drops a marker, tap on one selects it, drag its dot to move it, hold to delete.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedButton(enabled = !ed.busy && !ed.recording, onClick = {
-                            pendingMode = ed.mode
-                            opener.launch(arrayOf("audio/*", "application/octet-stream"))
-                        }) {
-                            Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (ed.mode == SamplesEditor.Mode.FILES) "Add files" else "Open")
-                        }
-                        OutlinedButton(enabled = !ed.busy, onClick = { recordToggle() }) {
-                            Icon(if (ed.recording) Icons.Filled.Stop else Icons.Filled.Mic, null,
-                                Modifier.size(18.dp),
-                                tint = if (ed.recording) MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (ed.recording) "Stop" else "Record")
-                        }
-                        ed.mic?.let { cur ->
-                            MiniPicker("", mics.map { it.label to it }, cur,
-                                enabled = !ed.recording) { ed.mic = it }
-                        }
-                        if (ed.recording) {
-                            Box(Modifier.size(10.dp)
-                                .background(MaterialTheme.colorScheme.error, CircleShape))
-                            Text("%.1f s".format(ed.recSeconds),
-                                fontFamily = SloopFontFamily,
-                                style = MaterialTheme.typography.bodySmall)
-                            LinearProgressIndicator(progress = { ed.recLevel },
-                                modifier = Modifier.width(80.dp))
-                        }
-                    }
-
-                    if (ed.mode == SamplesEditor.Mode.FILES) FilesPane(ed)
-                    else ChopPane(ed)
-                }
-            }
-        }
         }
 
 
@@ -501,18 +500,13 @@ private fun ChopPane(ed: SamplesEditor) {
     val typeface = ResourcesCompat.getFont(LocalContext.current, R.font.jetbrains_mono)
         ?: Typeface.MONOSPACE
     val x = ed.src
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (x == null) {
-            Text("Nothing loaded — open a file or record. The wave appears here.",
-                style = MaterialTheme.typography.bodySmall,
-                color = cs.onSurfaceVariant)
-            return@Column
-        }
-        val chops = ed.chops
-        val used = ed.usedChops
-        Text("${ed.srcName} · ${secs(x.size)} · ${chops.size} chops" +
-            (if (chops.count { !it.off } < chops.size) " (${chops.count { !it.off }} kept)" else ""),
-            style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+    val chops = ed.chops
+    val used = ed.usedChops
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (x != null)
+            Text("${ed.srcName} · ${secs(x.size)} · ${chops.size} chops" +
+                (if (chops.count { !it.off } < chops.size) " (${chops.count { !it.off }} kept)" else ""),
+                style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
 
         // ---- the wave: tap near a marker = select + play, tap elsewhere = add (snapped),
         //      drag a marker's handle = move it, long-press a marker = delete ----
@@ -521,8 +515,16 @@ private fun ChopPane(ed: SamplesEditor) {
         // the key each kept chop lands on: left to right on the wave, like the footer's pads
         val keyOf = HashMap<Int, Int>()
         used.forEachIndexed { j, c -> if (ed.chopMode == 0) keyOf[c.i] = minOf(127, ed.key0 + j) }
-        Box(Modifier.fillMaxWidth()) {
-            Canvas(Modifier.fillMaxWidth().height(140.dp)
+        // the viewer is pinned in the Sound block — an empty plate until a take is loaded
+        Box(Modifier.fillMaxWidth().height(140.dp)) {
+            if (x == null) {
+                Box(Modifier.fillMaxSize().background(cs.surfaceVariant),
+                    contentAlignment = Alignment.Center) {
+                    Text("Open a file or record — the wave appears here",
+                        style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                }
+            } else
+            Canvas(Modifier.fillMaxSize()
                 .pointerInput(x) {
                     fun nearMark(px: Float, radiusPx: Float): Int? {
                         val per = x.size / size.width.toFloat()
@@ -615,6 +617,7 @@ private fun ChopPane(ed: SamplesEditor) {
                 }
             }
         }
+        if (x == null) return@Column
 
         val c = chops.getOrNull(ed.sel)
         if (c != null) {
@@ -660,43 +663,33 @@ private fun ChopPane(ed: SamplesEditor) {
                     TextButton(onClick = { ed.moveMark(c.i, c.start + step(50.0)) }) { Text("»") }
                 }
             }
-        // ---- mark tools ----
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // ---- mark tools: compact buttons and pickers packed into one wrapping row ----
+        var bpm by remember { mutableStateOf("90") }
+        var div by remember { mutableStateOf(1.0) }
+        var parts by remember { mutableIntStateOf(8) }
+        val region = if (ed.marks.size >= 2) ed.marks.first().start to ed.marks.last().start
+            else 0 to x.size
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
             OutlinedButton(onClick = {
                 ed.nov?.let { ed.setMarkers(Smp.chopHits(x, it, ed.sens).toList()) }
             }) { Text("Chop on hits") }
-            Text("sens", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
-            Slider(value = ed.sens.toFloat(), onValueChange = { ed.sens = it.toInt() },
-                valueRange = 1f..10f, steps = 8, modifier = Modifier.weight(1f))
-            Text("${ed.sens}", fontFamily = SloopFontFamily,
-                style = MaterialTheme.typography.bodySmall)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            var bpm by remember { mutableStateOf("90") }
-            var div by remember { mutableStateOf(1.0) }
-            var parts by remember { mutableIntStateOf(8) }
-            val region = if (ed.marks.size >= 2) ed.marks.first().start to ed.marks.last().start
-                else 0 to x.size
+            MiniPicker("sens", (1..10).map { "$it" to it }, ed.sens) { ed.sens = it }
             OutlinedButton(onClick = {
                 ed.setMarkers(Smp.chopGrid(region.first, region.second,
                     bpm.toDoubleOrNull()?.coerceAtLeast(40.0) ?: 90.0, div).toList())
             }) { Text("Grid") }
-            OutlinedTextField(value = bpm, onValueChange = { bpm = it.filter { c -> c.isDigit() || c == '.' }.take(5) },
-                modifier = Modifier.width(72.dp), singleLine = true,
-                label = { Text("BPM") })
+            OutlinedTextField(value = bpm,
+                onValueChange = { bpm = it.filter { c -> c.isDigit() || c == '.' }.take(5) },
+                modifier = Modifier.width(64.dp), singleLine = true,
+                label = { Text("BPM") }, textStyle = MaterialTheme.typography.bodySmall)
             MiniPicker("div", listOf("1 bar" to 4.0, "1/2" to 2.0, "1/4" to 1.0,
                 "1/8" to 0.5, "1/16" to 0.25), div) { div = it }
             OutlinedButton(onClick = {
                 ed.setMarkers(Smp.chopEqual(region.first, region.second, parts).toList())
             }) { Text("Equal") }
             MiniPicker("n", listOf(2, 3, 4, 6, 8, 12, 16).map { "$it" to it }, parts) { parts = it }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("First key", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
-            MiniPicker("", (36..84).map { Smp.noteName(it) to it }, ed.key0) { ed.key0 = it }
+            MiniPicker("key", (36..84).map { Smp.noteName(it) to it }, ed.key0) { ed.key0 = it }
             MiniPicker("", listOf("one key per chop" to 0, "selected on all keys" to 1),
                 ed.chopMode) { ed.chopMode = it }
             MiniPicker("max len", listOf("—" to 0f, "0.25 s" to 0.25f, "0.5 s" to 0.5f,
