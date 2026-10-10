@@ -890,6 +890,18 @@ class DeviceController(context: Context) {
         for (i in 0 until len) if (out[i] != s.drumSteps.getOrNull(i)) setDrumStep(i, out[i])
     }
 
+    /**
+     * Moves every hit of lane [from] onto lane [to] (kick onto kick 2, open hat onto closed hat…) with their level
+     * and ratchet. Hits already on [to] stay and win where both have one; the rest of [from] becomes empty.
+     */
+    fun moveDrumLane(from: Int, to: Int) {
+        val s = _state.value
+        if (s.link != Link.READY || !s.drumGrid || from == to || from !in 0..15 || to !in 0..15) return
+        val keys = (0 until s.patternLength).filter { ((s.drumSteps.getOrNull(it)?.on ?: 0) shr from) and 1 == 1 }
+            .map { it * 16 + from }.toSet()
+        if (keys.isNotEmpty()) placeDrumCells(keys, 0, to - from, false)
+    }
+
     /** Removes the drum hits named by [keys] (step * 16 + lane). */
     fun deleteDrumCells(keys: Set<Int>) {
         val s = _state.value

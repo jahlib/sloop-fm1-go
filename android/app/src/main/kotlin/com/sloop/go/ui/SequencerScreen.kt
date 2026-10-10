@@ -449,7 +449,11 @@ private class Viewport {
         clamp()
     }
 
+    /** A lane label drag keeps the finger in the label column: no edge auto-scroll then. */
+    var nudgeOff = false
+
     fun nudge(p: Offset) {
+        if (nudgeOff) return
         val edge = 36f * d
         val step = 10f * d
         if (p.x > w - edge) scrollBy(step, 0f) else if (p.x < lw + edge) scrollBy(-step, 0f)
@@ -590,6 +594,7 @@ private fun DrumGrid(
     val cs = MaterialTheme.colorScheme
     var gdrag by remember(state.selectedTrack, selectMode) { mutableStateOf<GroupDrag?>(null) }
     var marquee by remember(state.selectedTrack, selectMode) { mutableStateOf<Marquee?>(null) }
+    var laneDrag by remember(state.selectedTrack) { mutableStateOf<LaneDrag?>(null) }
     val onSelNow by rememberUpdatedState(onCellSel)
     val live = remember { object { var v: Set<Int> = cellSel } }   // the selection as the gesture sees it
     live.v = cellSel
@@ -639,6 +644,13 @@ private fun DrumGrid(
                 return true
             }
             override fun longPress(p: Offset): Boolean {
+                if (p.x < vp.lw && p.y >= vp.hdr) {            // hold a lane name: pick the whole lane, drag it onto another
+                    val lane = vp.rowAt(p.y).takeIf { it in DRUM_LANES.indices } ?: return false
+                    laneDrag = LaneDrag(lane, lane)
+                    vp.nudgeOff = true
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    return true
+                }
                 if (selectMode) {                              // hold a hit: take a copy of the selection and carry it
                     val c = cell(p)?.takeIf { isOn(it.first, it.second) } ?: return false
                     val k = c.first * 16 + c.second
@@ -654,6 +666,11 @@ private fun DrumGrid(
                 return true
             }
             override fun drag(p: Offset) {
+                laneDrag?.let { ld ->
+                    val to = vp.rowAt(p.y).coerceIn(0, DRUM_LANES.lastIndex)
+                    if (to != ld.to) { laneDrag = ld.copy(to = to); haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
+                    return
+                }
                 if (selectMode) {
                     gdrag?.let { g -> gdrag = GroupDrag(g.grabStep, g.grabRow, g.copy,
                         vp.stepAt(p.x) - g.grabStep, vp.rowAt(p.y) - g.grabRow) }
@@ -666,6 +683,13 @@ private fun DrumGrid(
                 if (isOn(c.first, c.second) != paintOn) toggleDrum(vm, c.first, c.second)
             }
             override fun release(p: Offset) {
+                laneDrag?.let { ld ->
+                    drag(p)
+                    val to = laneDrag?.to ?: ld.to
+                    if (to != ld.from) vm.controller.moveDrumLane(ld.from, to)
+                    laneDrag = null; vp.nudgeOff = false
+                    return
+                }
                 if (selectMode) {
                     drag(p)
                     gdrag?.let { g ->
@@ -686,7 +710,7 @@ private fun DrumGrid(
                 }
                 paintOn = null
             }
-            override fun cancel() { paintOn = null; gdrag = null; marquee = null }
+            override fun cancel() { paintOn = null; gdrag = null; marquee = null; laneDrag = null; vp.nudgeOff = false }
         }
     }
 
@@ -733,6 +757,15 @@ private fun DrumGrid(
                 drawRect(cs.tertiary.copy(alpha = 0.15f), Offset(left, top), sz)
                 drawRect(cs.tertiary, Offset(left, top), sz, style = Stroke(1.5f * d))
             }
+            laneDrag?.let { ld ->                         // the picked lane lit up, its hits ghosted onto the target lane
+                drawRect(cs.tertiary.copy(alpha = 0.18f), Offset(lw, hdr + ld.from * rh - sy), Size(size.width - lw, rh))
+                if (ld.to != ld.from) {
+                    drawRect(cs.tertiary, Offset(lw, hdr + ld.to * rh - sy), Size(size.width - lw, rh), style = Stroke(2f * d))
+                    for (c in c0..c1) if (((steps.getOrNull(c)?.on ?: 0) shr ld.from) and 1 == 1)
+                        drawRoundRect(cs.tertiary.copy(alpha = 0.75f), Offset(lw + c * cw - sx + pad, hdr + ld.to * rh - sy + pad),
+                            Size(cw - 2 * pad, rh - 2 * pad), CornerRadius(5f * d))
+                }
+            }
         }
         clipRect(lw, 0f, size.width, hdr) {
             drawRect(cs.surface, Offset(lw, 0f), Size(size.width - lw, hdr))
@@ -745,7 +778,8 @@ private fun DrumGrid(
             drawRect(cs.surface, Offset(0f, hdr), Size(lw, size.height - hdr))
             with(painter) {
                 for (r in r0..r1) text(DRUM_LANES[r], 6f * d, hdr + r * rh - sy + rh / 2,
-                    cs.onSurface, 10f * d, Paint.Align.LEFT)
+                    if (laneDrag?.let { r == it.from || r == it.to } == true) cs.tertiary else cs.onSurface,
+                    10f * d, Paint.Align.LEFT)
             }
         }
         drawRect(cs.surface, Offset.Zero, Size(lw, hdr))
@@ -770,6 +804,9 @@ private class NoteDrag(
 )
 
 private class NoteHit(val start: Int, val note: Int, val len: Int, val edge: Int)
+
+/** A drum lane picked by its name, being dragged ([to]) onto another lane. */
+private data class LaneDrag(val from: Int, val to: Int)
 
 /** The selected notes being carried (or, with [copy], a clone of them), as grid cells from the grab point. */
 private class GroupDrag(val grabStep: Int, val grabRow: Int, val copy: Boolean, val dStep: Int = 0, val dPitch: Int = 0)

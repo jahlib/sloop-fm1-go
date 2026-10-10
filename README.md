@@ -24,7 +24,7 @@ so edits reach the FM-1 immediately.
 
 ## Install on your phone
 
-**⬇ [Download sloop_go_1.6.7.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.6.7/sloop_go_1.6.7.apk)**
+**⬇ [Download sloop_go_1.6.8.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.6.8/sloop_go_1.6.8.apk)**
 — other versions live on the [Releases](https://github.com/jahlib/sloop-fm1-go/releases) page.
 
 0. You need an **M-VAVE FM-1** device with the latest [**SLOOP** firmware](https://github.com/isod89/sloop-fm1)
@@ -54,9 +54,11 @@ from Sloop Go. The **Updates** block at the bottom of the **Device** page runs t
 - **Sequencer** — drum grid and synth piano-roll with pinch zoom and a single icon toolbar, Live / Store (draft)
   modes, voice modes, step nudge / fill / parameter locks (SLOOP 2.4); **Select** mode in the piano roll and the drum
   grid (frame-select — or just hold empty space in the piano roll, drag the whole figure, stretch them all by one
-  note's edge, hold to clone it, existing notes win on overlap), ±12 transpose with auto-fit; **Save / Load** of note
+  note's edge, hold to clone it, existing notes win on overlap), ±12 transpose with auto-fit (only the selected notes
+  in Select mode); in the drum grid **hold a lane name** (e.g. KICK) and drag it onto another lane to move all of its
+  hits at once (kick → kick 2, open hat → closed hat…); **Save / Load** of note
   patterns as MIDI files kept inside the app (separate piano-roll and drum lists with previews; tap to load, or hold
-  one and drag it onto the piano roll; 20 ready drum and 30 ready piano patterns included, some of them 64 steps —
+  one and drag it onto the piano roll; 30 ready drum and 40 ready piano patterns included, many of them 32 or 64 steps —
 loading a longer clip grows the pattern length to fit it). Only the notes are stored,
   never the sound or knob positions. A **MIDI patterns** page renames, deletes and loads them onto any track.
 - **FM6 patches** (SLOOP 2.4) — slot library, DX7 SysEx import / export from phone storage, upload to the bank or to a
