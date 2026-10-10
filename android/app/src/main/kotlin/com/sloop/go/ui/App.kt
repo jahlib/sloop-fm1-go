@@ -83,14 +83,14 @@ import com.sloop.go.device.DeviceState
 import com.sloop.go.device.Link
 
 private enum class Tab(val title: String, val icon: ImageVector) {
+    SONG("Song", Icons.Filled.Timeline),
+    MIX("Mixer", Icons.Filled.Equalizer),
     PARAMS("Sound", Icons.Filled.Tune),
     SEQ("Sequencer", Icons.Filled.GridView),
-    FM6("FM6 patches", Icons.Filled.GraphicEq),
     SAMPLES("Samples", Icons.Filled.LibraryMusic),
     DRUMSYNTH("Drum synth", Icons.Filled.Album),
-    SONG("Song", Icons.Filled.Timeline),
+    FM6("FM6 patches", Icons.Filled.GraphicEq),
     MIDI("MIDI patterns", Icons.Filled.FolderOpen),
-    MIX("Mixer", Icons.Filled.Equalizer),
     SETTINGS("Device", Icons.Filled.Settings),
 }
 

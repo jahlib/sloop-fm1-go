@@ -333,17 +333,8 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                 }
             }
             if (kit != null) {
-                BasicTextField(value = kit.name, singleLine = true, cursorBrush = SolidColor(cs.primary),
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = cs.onSurface),
-                    onValueChange = {
-                        val was = Triple(kit.name, kit.crush, kit.src)
-                        kit.name = it.filter { c -> c.code in 0x20..0x7E }.take(8)
-                        ed.noteHead(ctl, ed.k, was, Triple(kit.name, kit.crush, kit.src))
-                        ed.pend.add(HEAD); ed.stored = false; ed.rev++
-                        schedule(false)
-                    },
-                    modifier = Modifier.width(140.dp).border(1.dp, cs.outline, RoundedCornerShape(8.dp))
-                        .padding(horizontal = 10.dp, vertical = 8.dp))
+                Text(kit.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
+                    color = cs.onSurfaceVariant, maxLines = 1)
                 VerticalDivider(Modifier.padding(horizontal = 2.dp).height(24.dp))
                 OutlinedButton(enabled = ed.src != null, modifier = Modifier.height(32.dp), contentPadding = tight, onClick = {
                     val s = ed.src ?: return@OutlinedButton
@@ -402,6 +393,18 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                                     saver.launch("${kit.name.ifBlank { "kit" }.lowercase().replace(Regex("[^a-z0-9]+"), "-")}.sloopdrums.json")
                                 }) { Text("Save file") }
                                 OutlinedButton(enabled = !ed.busy, onClick = { opener.launch(arrayOf("*/*")) }) { Text("Open file") }
+                                BasicTextField(value = kit.name, singleLine = true, cursorBrush = SolidColor(cs.primary),
+                                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = cs.onSurface),
+                                    onValueChange = {
+                                        val was = Triple(kit.name, kit.crush, kit.src)
+                                        kit.name = it.filter { c -> c.code in 0x20..0x7E }.take(8)
+                                        ed.noteHead(ctl, ed.k, was, Triple(kit.name, kit.crush, kit.src))
+                                        ed.pend.add(HEAD); ed.stored = false; ed.rev++
+                                        schedule(false)
+                                    },
+                                    modifier = Modifier.align(Alignment.CenterVertically).width(140.dp)
+                                        .border(1.dp, cs.outline, RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 10.dp, vertical = 8.dp))
                             }
                             val names = ed.list?.names.orEmpty()
                             var open by remember { mutableStateOf(false) }
