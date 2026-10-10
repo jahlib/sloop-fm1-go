@@ -168,7 +168,8 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                 if (state.drumGrid) vm.controller.deleteDrumCells(noteSel) else vm.controller.deleteNotes(noteSel)
                 noteSel = emptySet()
             })
-        if (state.drumGrid) DrumGrid(vm, state, fitTick, selectMode, noteSel, { noteSel = it }, Modifier.weight(1f).fillMaxWidth())
+        if (state.drumGrid) DrumGrid(vm, state, fitTick, selectMode, { selectMode = it }, noteSel, { noteSel = it },
+            Modifier.weight(1f).fillMaxWidth())
         else PianoRoll(vm, state, fitTick, selected, { sel = it }, selectMode, noteSel, { noteSel = it },
             carry, { carry = null; browser = null }, Modifier.weight(1f).fillMaxWidth())
     }
@@ -582,9 +583,10 @@ private fun rememberPainter(): Painter {
 
 @Composable
 private fun DrumGrid(
-    vm: SloopViewModel, state: DeviceState, fitTick: Int, selectMode: Boolean, cellSel: Set<Int>,
-    onCellSel: (Set<Int>) -> Unit, modifier: Modifier,
+    vm: SloopViewModel, state: DeviceState, fitTick: Int, selectMode: Boolean, onSelectMode: (Boolean) -> Unit,
+    cellSel: Set<Int>, onCellSel: (Set<Int>) -> Unit, modifier: Modifier,
 ) {
+    val onSelectModeNow by rememberUpdatedState(onSelectMode)
     val length = state.patternLength
     val steps = state.drumSteps
     val d = LocalDensity.current.density
@@ -687,6 +689,13 @@ private fun DrumGrid(
                     drag(p)
                     val to = laneDrag?.to ?: ld.to
                     if (to != ld.from) vm.controller.moveDrumLane(ld.from, to)
+                    else {                                     // held but not dragged: select the whole lane (Delete clears it)
+                        val on = vm.controller.state.value.drumSteps
+                        val keys = (0 until length).filter { ((on.getOrNull(it)?.on ?: 0) shr ld.from) and 1 == 1 }
+                            .map { it * 16 + ld.from }.toSet()
+                        setSel(keys)
+                        if (keys.isNotEmpty()) onSelectModeNow(true)
+                    }
                     laneDrag = null; vp.nudgeOff = false
                     return
                 }

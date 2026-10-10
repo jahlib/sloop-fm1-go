@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -59,7 +60,7 @@ import com.sloop.go.proto.Fm6
 import com.sloop.go.proto.Fmt
 import kotlinx.coroutines.delay
 
-private fun rcText(rc: Int): String = when (rc) {
+internal fun rcText(rc: Int): String = when (rc) {
     1 -> "Bad slot or arguments"
     2 -> "Empty slot or flash error"
     3 -> "Stop the device first (flash write)"
@@ -94,8 +95,7 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
     val nb = state.fm6?.bank ?: Fm6.BANK_N
     val total = nf + nb
     val ntrk = minOf(3, info.ntrk.coerceAtLeast(1))
-    val track = ed.track.takeIf { it in 0 until ntrk }
-        ?: state.selectedTrack.takeIf { it in 0 until ntrk } ?: 0
+    val track = vm.fm6Track(state)
     val trackIsFm6 = state.trackEngine(track) == state.fm6Engine
     val slot = ed.slot.coerceIn(0, total - 1)
     fun slotName(i: Int) = if (i < nf) "F${i + 1}" else "B${i - nf + 1}"
@@ -126,7 +126,7 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
     suspend fun sendTrack(quiet: Boolean) {
         val rc = ctl.fm6Put(0, track, Fm6.pack(ed.voice))
         if (rc != 0) ed.say(rcText(rc), true)
-        else if (!quiet) ed.say("Sent to track ${track + 1}: ${Fm6.name(ed.voice)}")
+        else { ed.sentRev = ed.rev; if (!quiet) ed.say("Sent to track ${track + 1}: ${Fm6.name(ed.voice)}") }
     }
 
     var confirm by remember { mutableStateOf<Triple<String, String, () -> Unit>?>(null) }
@@ -187,7 +187,10 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalItemSpacing = 8.dp,
     ) {
-        item(key = "header", span = StaggeredGridItemSpan.FullLine) { ScreenHeader("FM6 patches", state, NAV_INSET) }
+        item(key = "header", span = StaggeredGridItemSpan.FullLine) {
+            // the pinned cluster is wider while the SEND button sits in it (Store mode)
+            ScreenHeader("FM6 patches", state, if (ed.live) NAV_INSET else NAV_INSET + 76.dp)
+        }
 
         if (ed.busy || ed.message != null) item(key = "msg", span = StaggeredGridItemSpan.FullLine) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
@@ -201,7 +204,7 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
 
         // ---- target and slots side by side, the track card a bit narrower
         item(key = "trackSlots", span = StaggeredGridItemSpan.FullLine) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.Top) {
             Card(Modifier.weight(0.45f).fillMaxHeight()) {
                 Column(Modifier.fillMaxHeight().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -234,10 +237,13 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                         }
                     }
                     Spacer(Modifier.weight(1f))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(checked = ed.live, onCheckedChange = { ed.live = it })
-                        Text("  Send while editing", style = MaterialTheme.typography.bodyMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = ed.live, onClick = { ed.live = true }, label = { Text("Live") })
+                        FilterChip(selected = !ed.live, onClick = { ed.live = false }, label = { Text("Store") })
                     }
+                    Text(if (ed.live) "Every knob change goes to the track at once."
+                        else "Edits stay here until SEND (top left, next to the menu).",
+                        style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                 }
             }
 

@@ -7,6 +7,20 @@ package com.sloop.go.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.VerticalDivider
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -101,7 +115,7 @@ private fun kitFromJson(text: String): Dsyn.Kit {
 
 /** SLOOP 2.5 drum synth: edit every value of the four synthesised kits SYN1..SYN4, heard at once. */
 @Composable
-fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
+fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, nav: @Composable () -> Unit) {
     if (state.link != Link.READY || state.info == null) {
         NotReady("Drum synth", state, onDevice)
         return
@@ -245,145 +259,164 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
         )
     }
 
-    LazyVerticalStaggeredGrid(
-        columns = StaggeredGridCells.Fixed(2),
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(8.dp, 8.dp, 8.dp, 96.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalItemSpacing = 8.dp,
-    ) {
-        item(key = "header", span = StaggeredGridItemSpan.FullLine) { ScreenHeader("Drum synth", state, NAV_INSET) }
-
-        if (ed.busy || ed.message != null) item(key = "msg", span = StaggeredGridItemSpan.FullLine) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-                if (ed.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                ed.message?.let { Text(it, color = if (ed.isError) cs.error else cs.primary, style = MaterialTheme.typography.bodySmall) }
+    val tight = PaddingValues(horizontal = 10.dp)
+    Column(Modifier.fillMaxSize()) {
+        // ---- pinned header: navigation, kit pick, name and the audition controls
+        Row(Modifier.fillMaxWidth().background(cs.surface).horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            nav()
+            var kitMenu by remember { mutableStateOf(false) }
+            Box {
+                Text("SYN${ed.k + 1} ▾", Modifier.clickable(enabled = !ed.busy) { kitMenu = true }
+                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                    color = cs.primary, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                DropdownMenu(expanded = kitMenu, onDismissRequest = { kitMenu = false }) {
+                    for (k in 0 until Dsyn.NUSER) DropdownMenuItem(
+                        text = { Text("SYN${k + 1}", fontWeight = if (k == ed.k) FontWeight.Bold else FontWeight.Normal) },
+                        onClick = { kitMenu = false; if (k != ed.k) op { load(k) } })
+                }
+            }
+            if (kit != null) {
+                BasicTextField(value = kit.name, singleLine = true, cursorBrush = SolidColor(cs.primary),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = cs.onSurface),
+                    onValueChange = {
+                        kit.name = it.filter { c -> c.code in 0x20..0x7E }.take(8)
+                        ed.pend.add(HEAD); ed.stored = false; ed.rev++
+                        schedule(false)
+                    },
+                    modifier = Modifier.width(140.dp).border(1.dp, cs.outline, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp))
+                VerticalDivider(Modifier.padding(horizontal = 2.dp).height(24.dp))
+                Button(onClick = { vm.launch { runCatching { ctl.dsynPlay(ed.k, ed.lane) } } },
+                    modifier = Modifier.height(32.dp), contentPadding = tight) { Text("Play") }
+                OutlinedButton(enabled = ed.src != null, modifier = Modifier.height(32.dp), contentPadding = tight, onClick = {
+                    val s = ed.src ?: return@OutlinedButton
+                    kit.sounds[ed.lane] = s.sounds[ed.lane].copyOf()
+                    ed.pend.add(ed.lane); ed.stored = false; ed.rev++
+                    schedule(true)
+                }) { Text("Reset") }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Switch(checked = ed.audition, onCheckedChange = { ed.audition = it })
+                    Text("Hear changes", style = MaterialTheme.typography.labelMedium)
+                }
+                Spacer(Modifier.width(8.dp))
             }
         }
 
-        item(key = "kit", span = StaggeredGridItemSpan.FullLine) {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        for (k in 0 until Dsyn.NUSER) FilterChip(selected = k == ed.k, enabled = !ed.busy,
-                            onClick = { op { load(k) } }, label = { Text("SYN${k + 1}") })
-                        if (kit != null) OutlinedTextField(value = kit.name, singleLine = true, label = { Text("Name") },
-                            modifier = Modifier.weight(1f), onValueChange = {
-                                kit.name = it.filter { c -> c.code in 0x20..0x7E }.take(8)
-                                ed.pend.add(HEAD); ed.stored = false; ed.rev++
-                                schedule(false)
-                            })
-                    }
-                    if (kit == null && !ed.busy) Button(onClick = { op { load(ed.k) } }) { Text("Load kits") }
-                }
-            }
+        if (ed.busy || ed.message != null) Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
+            if (ed.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            ed.message?.let { Text(it, color = if (ed.isError) cs.error else cs.primary, style = MaterialTheme.typography.bodySmall) }
         }
 
-        if (kit != null) {
-            item(key = "lane", span = StaggeredGridItemSpan.FullLine) {
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                            Dsyn.LANE_NAMES.forEachIndexed { l, n ->
-                                FilterChip(selected = l == ed.lane, onClick = {
-                                    ed.lane = l; ed.rev++
-                                    vm.launch { runCatching { ctl.dsynPlay(ed.k, l) } }
-                                }, label = { Text(n, style = MaterialTheme.typography.labelSmall) })
-                            }
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Button(onClick = { vm.launch { runCatching { ctl.dsynPlay(ed.k, ed.lane) } } }) { Text("Play") }
-                            OutlinedButton(enabled = ed.src != null, onClick = {
-                                val s = ed.src ?: return@OutlinedButton
-                                kit.sounds[ed.lane] = s.sounds[ed.lane].copyOf()
-                                ed.pend.add(ed.lane); ed.stored = false; ed.rev++
-                                schedule(true)
-                            }) { Text("Reset") }
-                            Switch(checked = ed.audition, onCheckedChange = { ed.audition = it })
-                            Text("Hear changes", style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                }
+        // ---- the scrolling middle: store / files first, then the knob blocks of the picked sound
+        LazyVerticalStaggeredGrid(
+            columns = StaggeredGridCells.Fixed(2),
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalItemSpacing = 8.dp,
+        ) {
+            if (kit == null && !ed.busy) item(key = "load", span = StaggeredGridItemSpan.FullLine) {
+                Button(onClick = { op { load(ed.k) } }) { Text("Load kits") }
             }
 
-            for (g in Dsyn.GROUPS) item(key = "g-${g.title}") {
-                val items = g.knobs.map { knobItem(it) } + if (g.title == "Output") crushItems() else emptyList()
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(vertical = 4.dp)) {
-                        Text(g.title.uppercase(), Modifier.padding(start = 14.dp, top = 6.dp, bottom = 2.dp),
-                            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        items.chunked(4).forEach { row ->
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-                                row.forEach { it ->
-                                    Box(Modifier.weight(1f)) {
-                                        ParamControl(it.desc, it.value, it.text, it.onFinished, it.onChange)
-                                    }
-                                }
-                                repeat(4 - row.size) { Box(Modifier.weight(1f)) }
-                            }
-                        }
-                    }
-                }
-            }
-
-            item(key = "actions", span = StaggeredGridItemSpan.FullLine) {
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(if (ed.stored) "Stored on the FM-1" else "Not stored yet: kept in RAM until you press Store",
-                            style = MaterialTheme.typography.bodySmall, color = if (ed.stored) cs.onSurfaceVariant else cs.primary)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Button(enabled = !ed.busy, onClick = {
-                                op {
-                                    ed.job?.join(); flush()
-                                    when (val rc = ctl.dsynStore()) {
-                                        0 -> { ed.stored = true; ed.say("The four kits are stored") }
-                                        3 -> ed.say("Stop the song first (flash write)", true)
-                                        else -> ed.say("Flash error (rc $rc)", true)
-                                    }
-                                }
-                            }) { Text("Store") }
-                            OutlinedButton(enabled = !ed.busy, onClick = {
-                                op {
-                                    ed.job?.join(); flush()
-                                    ed.say(if (ctl.dsynUse(ed.k)) "The drum track plays SYN${ed.k + 1}" else "SYN${ed.k + 1} is not in the KIT list", false)
-                                }
-                            }) { Text("Use on drum track") }
-                            OutlinedButton(onClick = {
-                                pendingExport = kitJson(kit).toByteArray()
-                                saver.launch("${kit.name.ifBlank { "kit" }.lowercase().replace(Regex("[^a-z0-9]+"), "-")}.sloopdrums.json")
-                            }) { Text("Save file") }
-                            OutlinedButton(enabled = !ed.busy, onClick = { opener.launch(arrayOf("*/*")) }) { Text("Open file") }
-                        }
-                        val names = ed.list?.names.orEmpty()
-                        var open by remember { mutableStateOf(false) }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.weight(1f)) {
-                                OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
-                                    Text("From ${names.getOrNull(ed.from) ?: "?"}  ▾", maxLines = 1)
-                                }
-                                DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                                    names.forEachIndexed { i, n -> DropdownMenuItem(text = { Text(n) },
-                                        onClick = { ed.from = i; open = false }) }
-                                }
-                            }
-                            Button(enabled = !ed.busy, onClick = {
-                                val i = ed.from
-                                confirm = Triple("Copy kit?", "SYN${ed.k + 1} becomes a copy of ${names.getOrNull(i)}; your edits to it are lost.") {
+            if (kit != null) {
+                item(key = "actions", span = StaggeredGridItemSpan.FullLine) {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(if (ed.stored) "Stored on the FM-1" else "Not stored yet: kept in RAM until you press Store",
+                                style = MaterialTheme.typography.bodySmall, color = if (ed.stored) cs.onSurfaceVariant else cs.primary)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Button(enabled = !ed.busy, onClick = {
                                     op {
-                                        val rc = ctl.dsynCopy(ed.k, i)
-                                        if (rc != 0) { ed.say("Copy failed (rc $rc)", true); return@op }
-                                        ed.pend.clear()
-                                        load(ed.k)
-                                        ed.stored = false
-                                        ed.say("Copied ${names.getOrNull(i)}")
+                                        ed.job?.join(); flush()
+                                        when (val rc = ctl.dsynStore()) {
+                                            0 -> { ed.stored = true; ed.say("The four kits are stored") }
+                                            3 -> ed.say("Stop the song first (flash write)", true)
+                                            else -> ed.say("Flash error (rc $rc)", true)
+                                        }
+                                    }
+                                }) { Text("Store") }
+                                OutlinedButton(enabled = !ed.busy, onClick = {
+                                    op {
+                                        ed.job?.join(); flush()
+                                        ed.say(if (ctl.dsynUse(ed.k)) "The drum track plays SYN${ed.k + 1}" else "SYN${ed.k + 1} is not in the KIT list", false)
+                                    }
+                                }) { Text("Use on drum track") }
+                                OutlinedButton(onClick = {
+                                    pendingExport = kitJson(kit).toByteArray()
+                                    saver.launch("${kit.name.ifBlank { "kit" }.lowercase().replace(Regex("[^a-z0-9]+"), "-")}.sloopdrums.json")
+                                }) { Text("Save file") }
+                                OutlinedButton(enabled = !ed.busy, onClick = { opener.launch(arrayOf("*/*")) }) { Text("Open file") }
+                            }
+                            val names = ed.list?.names.orEmpty()
+                            var open by remember { mutableStateOf(false) }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.weight(1f)) {
+                                    OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
+                                        Text("From ${names.getOrNull(ed.from) ?: "?"}  ▾", maxLines = 1)
+                                    }
+                                    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                                        names.forEachIndexed { i, n -> DropdownMenuItem(text = { Text(n) },
+                                            onClick = { ed.from = i; open = false }) }
                                     }
                                 }
-                            }) { Text("Copy") }
+                                Button(enabled = !ed.busy, onClick = {
+                                    val i = ed.from
+                                    confirm = Triple("Copy kit?", "SYN${ed.k + 1} becomes a copy of ${names.getOrNull(i)}; your edits to it are lost.") {
+                                        op {
+                                            val rc = ctl.dsynCopy(ed.k, i)
+                                            if (rc != 0) { ed.say("Copy failed (rc $rc)", true); return@op }
+                                            ed.pend.clear()
+                                            load(ed.k)
+                                            ed.stored = false
+                                            ed.say("Copied ${names.getOrNull(i)}")
+                                        }
+                                    }
+                                }) { Text("Copy") }
+                            }
+                            Text("Every change plays on the FM-1 at once. Store keeps SYN1–SYN4 in flash with the settings (stop the song first).",
+                                style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                         }
-                        Text("Every change plays on the FM-1 at once. Store keeps SYN1–SYN4 in flash with the settings (stop the song first).",
-                            style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                     }
+                }
+
+                for (g in Dsyn.GROUPS) item(key = "g-${g.title}") {
+                    val items = g.knobs.map { knobItem(it) } + if (g.title == "Output") crushItems() else emptyList()
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(vertical = 4.dp)) {
+                            Text(g.title.uppercase(), Modifier.padding(start = 14.dp, top = 6.dp, bottom = 2.dp),
+                                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            items.chunked(4).forEach { row ->
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                                    row.forEach { it ->
+                                        Box(Modifier.weight(1f)) {
+                                            ParamControl(it.desc, it.value, it.text, it.onFinished, it.onChange)
+                                        }
+                                    }
+                                    repeat(4 - row.size) { Box(Modifier.weight(1f)) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- pinned footer: the 16 sounds across the whole width, big squarish touch pads
+        if (kit != null) Row(Modifier.fillMaxWidth().background(cs.surface).padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Dsyn.LANE_NAMES.forEachIndexed { l, n ->
+                val on = l == ed.lane
+                Box(Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(10.dp))
+                    .background(if (on) cs.primary else cs.surfaceVariant)
+                    .clickable {
+                        ed.lane = l; ed.rev++
+                        vm.launch { runCatching { ctl.dsynPlay(ed.k, l) } }
+                    }, contentAlignment = Alignment.Center) {
+                    Text(n, Modifier.padding(horizontal = 2.dp), textAlign = TextAlign.Center, maxLines = 2,
+                        color = if (on) cs.onPrimary else cs.onSurfaceVariant,
+                        fontSize = 10.sp, lineHeight = 11.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium)
                 }
             }
         }

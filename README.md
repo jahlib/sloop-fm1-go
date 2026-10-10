@@ -24,7 +24,7 @@ so edits reach the FM-1 immediately.
 
 ## Install on your phone
 
-**⬇ [Download sloop_go_1.6.8.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.6.8/sloop_go_1.6.8.apk)**
+**⬇ [Download sloop_go_1.6.9.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.6.9/sloop_go_1.6.9.apk)**
 — other versions live on the [Releases](https://github.com/jahlib/sloop-fm1-go/releases) page.
 
 0. You need an **M-VAVE FM-1** device with the latest [**SLOOP** firmware](https://github.com/isod89/sloop-fm1)
@@ -63,8 +63,11 @@ loading a longer clip grows the pattern length to fit it). Only the notes are st
   never the sound or knob positions. A **MIDI patterns** page renames, deletes and loads them onto any track.
 - **FM6 patches** (SLOOP 2.4) — slot library, DX7 SysEx import / export from phone storage, upload to the bank or to a
   track, and a full six-operator editor in Sound-style knob blocks: per-operator envelope previews, carriers and
-  feedback marking, LFO and pitch-EG blocks, double-tap a knob to restore the init value.
-- **Drum synth** (SLOOP 2.5) — the four synthesised kits SYN1–SYN4 in Sound-style knob blocks, heard while editing.
+  feedback marking, LFO and pitch-EG blocks, double-tap a knob to restore the init value. **Live / Store** like in the
+  sequencer: Live sends every change to the track at once, Store keeps edits on the phone until **SEND**, which sits
+  next to the menu button in the pinned top-left cluster so it is always in reach.
+- **Drum synth** (SLOOP 2.5) — the four synthesised kits SYN1–SYN4 in Sound-style knob blocks, heard while editing. A pinned top bar holds play/stop, the menu, the SYN picker, the
+  kit name and Play / Reset / Hear changes; the 16 sound pads are pinned along the bottom, the knobs scroll between.
 - **Song** (SLOOP 2.5) — vertical step cards: A–D section buttons, Bars / Times steppers, move and delete, loop,
   one-tap Add step, read / send.
 - **Samples** (SLOOP 2.4) — USR1–4 user sample slots. Load audio files from phone storage **or record straight from

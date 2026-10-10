@@ -9,7 +9,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import com.sloop.go.device.DeviceController
+import com.sloop.go.device.DeviceState
 import com.sloop.go.midi.MidiDeviceDesc
+import com.sloop.go.proto.Fm6
 import com.sloop.go.store.PatternStore
 import com.sloop.go.update.Updater
 import java.io.File
@@ -33,6 +35,29 @@ class SloopViewModel(app: Application) : AndroidViewModel(app) {
     /** Work that must outlive the page that started it (a bank upload, a flash write). */
     private val jobs = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     fun launch(block: suspend () -> Unit) = jobs.launch { block() }
+
+    /** The track the FM6 page edits for: its pick, else the selected track, else the first. */
+    fun fm6Track(s: DeviceState): Int {
+        val ntrk = minOf(3, (s.info?.ntrk ?: 1).coerceAtLeast(1))
+        return fm6.track.takeIf { it in 0 until ntrk } ?: s.selectedTrack.takeIf { it in 0 until ntrk } ?: 0
+    }
+
+    /** Store mode's SEND (also usable from anywhere): writes the edited FM6 patch to its track through the request queue. */
+    fun fm6SendNow() {
+        val s = state.value
+        val t = fm6Track(s)
+        if (fm6.busy || s.trackEngine(t) != s.fm6Engine) return
+        fm6.busy = true
+        launch {
+            try {
+                val rc = controller.fm6Put(0, t, Fm6.pack(fm6.voice))
+                if (rc == 0) { fm6.sentRev = fm6.rev; fm6.say("Sent to track ${t + 1}: ${Fm6.name(fm6.voice)}") }
+                else fm6.say(rcText(rc), true)
+            } catch (e: Exception) {
+                fm6.say("Error: ${e.message ?: e.javaClass.simpleName}", true)
+            } finally { fm6.busy = false }
+        }
+    }
 
     /** Self-update from the latest GitHub release. */
     sealed interface Update {

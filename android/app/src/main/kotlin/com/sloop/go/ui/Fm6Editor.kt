@@ -23,7 +23,10 @@ class Fm6Editor {
 
     /** Bumped by every edit the user makes (not by loads), so live sending only follows real edits. */
     var rev by mutableIntStateOf(0)
-    var sentRev = 0
+    var sentRev by mutableIntStateOf(0)
+
+    /** Edits not yet on the track (Store mode keeps them here until SEND). */
+    val dirty get() = rev != sentRev
 
     fun set(i: Int, value: Int) {
         val v = value.coerceIn(0, Fm6.max(i))

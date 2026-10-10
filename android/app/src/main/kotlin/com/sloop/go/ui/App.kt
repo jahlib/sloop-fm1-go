@@ -17,6 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -39,8 +40,10 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenu
@@ -128,6 +131,17 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
                 }
                 navMenu()
             }
+            // FM6 page in Store mode: SEND stays reachable without scrolling back up
+            val fm6 = vm.fm6
+            if (tab == Tab.FM6 && state.link == Link.READY && state.fm6Supported && !fm6.live) {
+                val can = !fm6.busy && state.trackEngine(vm.fm6Track(state)) == state.fm6Engine
+                val tight = PaddingValues(horizontal = 10.dp)
+                val send = Modifier.padding(start = 2.dp, end = 8.dp).height(30.dp)
+                if (fm6.dirty) Button(onClick = { vm.fm6SendNow() }, enabled = can, modifier = send,
+                    contentPadding = tight) { Text("SEND") }
+                else OutlinedButton(onClick = { vm.fm6SendNow() }, enabled = can, modifier = send,
+                    contentPadding = tight) { Text("SEND") }
+            }
         }
     }
 
@@ -143,14 +157,15 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
                 Tab.SEQ -> SequencerScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.FM6 -> Fm6Screen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.SAMPLES -> SamplesScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
-                Tab.DRUMSYNTH -> DrumSynthScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
+                Tab.DRUMSYNTH -> DrumSynthScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.SONG -> SongScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.MIDI -> MidiBrowserScreen(vm, state, openSequencer = { tab = Tab.SEQ })
                 Tab.MIX -> MixerScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.SETTINGS -> ConnectScreen(vm, state)
             }
             // the sequencer embeds the cluster in its control row only once the device info is loaded
-            val seqHasNav = tab == Tab.SEQ && state.link == Link.READY && state.info != null
+            val ready = state.link == Link.READY && state.info != null
+            val seqHasNav = ready && (tab == Tab.SEQ || (tab == Tab.DRUMSYNTH && (state.info?.proto ?: 0) >= 10))
             if (!seqHasNav) {
                 Surface(Modifier.align(Alignment.TopStart).padding(6.dp),
                     shape = RoundedCornerShape(16.dp),
