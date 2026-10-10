@@ -24,7 +24,7 @@ so edits reach the FM-1 immediately.
 
 ## Install on your phone
 
-**⬇ [Download sloop_go_1.6.11.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.6.11/sloop_go_1.6.11.apk)**
+**⬇ [Download sloop_go_1.7.0.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.7.0/sloop_go_1.7.0.apk)**
 — other versions live on the [Releases](https://github.com/jahlib/sloop-fm1-go/releases) page.
 
 0. You need an **M-VAVE FM-1** device with the latest [**SLOOP** firmware](https://github.com/isod89/sloop-fm1)
@@ -80,6 +80,10 @@ loading a longer clip grows the pattern length to fit it). Only the notes are st
 - **Mixer** — four vertical channel strips with faders, Mute and Edit.
 - **Device** — connection and firmware info. Play / Stop and the page menu are pinned in the top-left corner of every
   page and wake up once the FM-1 is connected.
+- **Undo / redo** — the first row of the page menu. Every edit (knobs, mixer, steps and notes, per-step nudge / fill /
+  locks, FM6 voice, drum synth sounds and kits, song order) is also noted in the phone's RAM; undo sends the earlier
+  value through the same request queue as a normal edit. The history is dropped on disconnect, and parts of it when an
+  engine / preset swap makes old values meaningless. Flash writes (Store, sample upload / erase) are not undoable.
 
 Requires a phone with USB host (OTG) and a USB-C cable to the FM-1. Written for SLOOP 2.4 (editor protocol v9);
 features that need newer firmware are hidden or disabled on older SLOOP.

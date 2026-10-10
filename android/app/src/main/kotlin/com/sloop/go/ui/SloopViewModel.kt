@@ -26,11 +26,11 @@ import kotlinx.coroutines.launch
 class SloopViewModel(app: Application) : AndroidViewModel(app) {
     val controller = DeviceController(app)
     val state = controller.state
-    val fm6 = Fm6Editor()
+    val fm6 = Fm6Editor(controller.history).also { e -> e.onRestored = { if (e.live) fm6SendNow() } }
     val samples = SamplesEditor()
-    val dsyn = DrumSynthEditor()
+    val dsyn = DrumSynthEditor(controller.history)
     val patterns = PatternStore(app).also { it.seedDefaults() }
-    val song = SongEditor()
+    val song = SongEditor(controller.history)
 
     /** Work that must outlive the page that started it (a bank upload, a flash write). */
     private val jobs = CoroutineScope(SupervisorJob() + Dispatchers.Main)

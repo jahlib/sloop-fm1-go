@@ -40,6 +40,8 @@ data class DeviceState(
     val queuedEdits: Int = 0,
     val playing: Boolean = false,
     val queueError: String? = null,
+    val canUndo: Boolean = false,
+    val canRedo: Boolean = false,
 ) {
     val isDrum: Boolean
         get() = info != null && dump != null && dump.engine >= info.nengines

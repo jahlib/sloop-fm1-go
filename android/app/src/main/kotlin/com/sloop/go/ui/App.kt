@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.FolderOpen
@@ -44,6 +46,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenu
@@ -104,6 +107,16 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
 
     val navMenu: @Composable () -> Unit = {
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            // the menu stays open, so several steps can be undone in a row
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                IconButton(onClick = { vm.controller.undo() }, enabled = state.canUndo) {
+                    Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo")
+                }
+                IconButton(onClick = { vm.controller.redo() }, enabled = state.canRedo) {
+                    Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo")
+                }
+            }
+            HorizontalDivider()
             Tab.entries.forEach { t ->
                 DropdownMenuItem(
                     text = { Text(t.title) },

@@ -67,7 +67,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.sloop.go.device.Change
+import com.sloop.go.device.DeviceController
 import com.sloop.go.device.DeviceState
+import com.sloop.go.device.EditHistory
 import com.sloop.go.device.Link
 import com.sloop.go.proto.Dsyn
 import com.sloop.go.proto.DsynList
@@ -79,7 +82,7 @@ import org.json.JSONObject
 private const val HEAD = 100   // pending marker for the kit's name / crush
 
 /** The SYN kit being edited; lives in the ViewModel so it survives tab switches. */
-class DrumSynthEditor {
+class DrumSynthEditor(val history: EditHistory? = null) {
     var k by mutableIntStateOf(0)
     var list by mutableStateOf<DsynList?>(null)
     var kit by mutableStateOf<Dsyn.Kit?>(null)
@@ -98,6 +101,46 @@ class DrumSynthEditor {
 
     fun say(text: String, error: Boolean = false) { message = text; isError = error; said++ }
     fun values(): IntArray = Dsyn.decode(kit!!.sounds[lane])
+
+    private var n = 0
+
+    /** Notes a sound edit for undo; a drag of one knob on one sound merges into a single step. */
+    fun noteSound(ctl: DeviceController, k: Int, lane: Int, before: ByteArray, after: ByteArray) {
+        if (before.contentEquals(after)) return
+        history?.record(Change.Custom<ByteArray>("dsyn:$k:$lane", before.copyOf(), after.copyOf()) { b -> putSound(ctl, k, lane, b) })
+    }
+
+    fun noteHead(ctl: DeviceController, k: Int, before: Triple<String, Int, Int>, after: Triple<String, Int, Int>) {
+        if (before == after) return
+        history?.record(Change.Custom<Triple<String, Int, Int>>("dsynHead:$k", before, after) { h -> putHead(ctl, k, h) })
+    }
+
+    /** A whole kit replaced (opened from a file, copied from another kit). */
+    fun noteKit(ctl: DeviceController, k: Int, before: Dsyn.Kit, after: Dsyn.Kit) {
+        history?.record(Change.Custom<Dsyn.Kit>("dsynKit#${n++}", before.copy(), after.copy()) { kt -> putKit(ctl, k, kt) })
+    }
+
+    /** Puts a sound back the way a knob would write it: to the device through the request queue, and into the open kit. */
+    suspend fun putSound(ctl: DeviceController, k: Int, lane: Int, bytes: ByteArray) {
+        if (k == this.k) kit?.let { it.sounds[lane] = bytes.copyOf(); pend.remove(lane); stored = false; rev++ }
+        ctl.dsynSound(k, lane, bytes)
+    }
+
+    suspend fun putHead(ctl: DeviceController, k: Int, h: Triple<String, Int, Int>) {
+        if (k == this.k) kit?.let { it.name = h.first; it.crush = h.second; pend.remove(HEAD); stored = false; rev++ }
+        ctl.dsynHead(k, h.first, h.second, h.third)
+    }
+
+    suspend fun putKit(ctl: DeviceController, k: Int, kt: Dsyn.Kit) {
+        val c = kt.copy()
+        if (k == this.k) kit?.let {
+            it.name = c.name; it.crush = c.crush
+            for (l in 0 until Dsyn.LANES) it.sounds[l] = c.sounds[l]
+            pend.clear(); stored = false; rev++
+        }
+        for (l in 0 until Dsyn.LANES) ctl.dsynSound(k, l, c.sounds[l])
+        ctl.dsynHead(k, c.name, c.crush, c.src)
+    }
 }
 
 private fun kitJson(kit: Dsyn.Kit) = JSONObject().put("format", "sloop-drumsynth").put("version", 1)
@@ -168,8 +211,10 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
         if (ed.kit == null) return
         val o = ed.values()
         if (o[key] == v && !done) return
+        val was = ed.kit!!.sounds[ed.lane]
         o[key] = v
         ed.kit!!.sounds[ed.lane] = Dsyn.encode(o)
+        ed.noteSound(ctl, ed.k, ed.lane, was, ed.kit!!.sounds[ed.lane])
         ed.pend.add(ed.lane); ed.stored = false; ed.rev++
         schedule(done)
     }
@@ -214,10 +259,12 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
             confirm = Triple("Open kit file?", "\"${file.name}\" will replace SYN${ed.k + 1} (not stored until you press Store).") {
                 op {
                     val kt = ed.kit ?: return@op
+                    val was = kt.copy()
                     kt.name = file.name; kt.crush = file.crush
                     for (l in 0 until Dsyn.LANES) { kt.sounds[l] = file.sounds[l]; ed.pend.add(l) }
                     ed.pend.add(HEAD); ed.stored = false; ed.rev++
                     flush()
+                    ed.noteKit(ctl, ed.k, was, kt)
                     ed.say("Opened ${file.name}")
                 }
             }
@@ -252,7 +299,9 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
         val bits = k.crush and 15
         val sh = (k.crush shr 4) and 15
         fun set(b: Int, h: Int) {
+            val was = Triple(k.name, k.crush, k.src)
             k.crush = (b and 15) or ((h and 15) shl 4)
+            ed.noteHead(ctl, ed.k, was, Triple(k.name, k.crush, k.src))
             ed.pend.add(HEAD); ed.stored = false; ed.rev++
             schedule(false)
         }
@@ -271,6 +320,7 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
         Row(Modifier.fillMaxWidth().background(cs.surface).horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             nav()
+            Text("Drum synth", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
             var kitMenu by remember { mutableStateOf(false) }
             Box {
                 Text("SYN${ed.k + 1} ▾", Modifier.clickable(enabled = !ed.busy) { kitMenu = true }
@@ -286,7 +336,9 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                 BasicTextField(value = kit.name, singleLine = true, cursorBrush = SolidColor(cs.primary),
                     textStyle = MaterialTheme.typography.bodyMedium.copy(color = cs.onSurface),
                     onValueChange = {
+                        val was = Triple(kit.name, kit.crush, kit.src)
                         kit.name = it.filter { c -> c.code in 0x20..0x7E }.take(8)
+                        ed.noteHead(ctl, ed.k, was, Triple(kit.name, kit.crush, kit.src))
                         ed.pend.add(HEAD); ed.stored = false; ed.rev++
                         schedule(false)
                     },
@@ -295,7 +347,9 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                 VerticalDivider(Modifier.padding(horizontal = 2.dp).height(24.dp))
                 OutlinedButton(enabled = ed.src != null, modifier = Modifier.height(32.dp), contentPadding = tight, onClick = {
                     val s = ed.src ?: return@OutlinedButton
+                    val was = kit.sounds[ed.lane]
                     kit.sounds[ed.lane] = s.sounds[ed.lane].copyOf()
+                    ed.noteSound(ctl, ed.k, ed.lane, was, kit.sounds[ed.lane])
                     ed.pend.add(ed.lane); ed.stored = false; ed.rev++
                     schedule(true)
                 }) { Text("Reset") }
@@ -365,10 +419,12 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                                     val i = ed.from
                                     confirm = Triple("Copy kit?", "SYN${ed.k + 1} becomes a copy of ${names.getOrNull(i)}; your edits to it are lost.") {
                                         op {
+                                            val was = ed.kit?.copy()
                                             val rc = ctl.dsynCopy(ed.k, i)
                                             if (rc != 0) { ed.say("Copy failed (rc $rc)", true); return@op }
                                             ed.pend.clear()
                                             load(ed.k)
+                                            ed.kit?.let { now -> if (was != null) ed.noteKit(ctl, ed.k, was, now) }
                                             ed.stored = false
                                             ed.say("Copied ${names.getOrNull(i)}")
                                         }
@@ -411,6 +467,7 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                 val on = l == ed.lane
                 Box(Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(10.dp))
                     .background(if (on) cs.primary else cs.surfaceVariant)
+                    .then(if (on) Modifier else Modifier.border(1.dp, cs.onSurfaceVariant, RoundedCornerShape(10.dp)))
                     .pointerInput(l) {
                         detectTapGestures(onPress = {
                             ed.lane = l; ed.rev++; ed.held++

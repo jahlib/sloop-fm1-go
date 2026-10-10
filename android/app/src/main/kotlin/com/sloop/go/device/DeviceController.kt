@@ -65,6 +65,10 @@ class DeviceController(context: Context) {
     private val _state = MutableStateFlow(DeviceState())
     val state: StateFlow<DeviceState> = _state.asStateFlow()
 
+    /** Undo / redo, in RAM only: every edit is also noted here and is put back through the very same queue. */
+    val history = EditHistory(onChange = { u, r -> _state.update { it.copy(canUndo = u, canRedo = r) } })
+    private val historyMutex = Mutex()
+
     val midiAvailable: Boolean get() = engine.available
     fun devices() = engine.devices()
     fun preferredDevice() = engine.preferredDevice()
@@ -153,6 +157,7 @@ class DeviceController(context: Context) {
             count
         }
         val drafts = clearDrafts()
+        history.clear()
         if (!silent) _state.value = DeviceState(status =
             if (unsent == 0 && drafts == 0) "Disconnected"
             else "Disconnected: $unsent queued edits and $drafts Late patterns discarded")
@@ -168,6 +173,7 @@ class DeviceController(context: Context) {
                 count
             }
             val drafts = clearDrafts()
+            history.clear()
             _state.value = DeviceState(status = if (unsent == 0 && drafts == 0) "Device unplugged"
                 else "Device unplugged: $unsent queued edits and $drafts Late patterns discarded")
         }
@@ -250,11 +256,12 @@ class DeviceController(context: Context) {
      * Parameter write (selected track). scope 0 = P_*, 1 = G_*. The UI updates at once, while the queue
      * carries the value in up to 12 steps from the last value the device got, so big sweeps glide.
      */
-    fun setParam(scope: Int, id: Int, value: Int) {
+    fun setParam(scope: Int, id: Int, value: Int, record: Boolean = true) {
         val s = _state.value
         if (s.link != Link.READY) return
         val track = s.selectedTrack
         val desc = (if (scope == 0) s.pdesc else s.gdesc).getOrNull(id)
+        val was = if (scope == 0) s.paramValue(id) else s.globalValue(id)
         // Discrete choices write once: stepping through them would flip intermediate patches/engines.
         val discrete = desc != null &&
             (desc.fmt == Fmt.ENUM || desc.fmt == Fmt.ONOFF || desc.names.isNotEmpty())
@@ -284,12 +291,18 @@ class DeviceController(context: Context) {
         _state.update { it.copy(queuedEdits = synchronized(pendingLock) { edits.size }) }
         editSignal.trySend(Unit)
         _state.update { it.withParam(scope, id, value) } // optimistic UI
+        if (record) {
+            // swapping the engine changes what every parameter of the track means: older edits cannot be put back
+            if (scope == 1 && desc?.label == "ENG") history.dropTrack(track)
+            else if (was != value) history.record(Change.Param(scope, id, if (scope == 0) track else -1, was, value))
+        }
     }
 
     /** Loads a factory preset of [engine] into the selected synth track (the device pushes RELOAD afterwards). */
     fun selectPreset(engine: Int, preset: Int) {
         val s = _state.value
         if (s.link != Link.READY || s.isDrum || s.dump == null) return
+        history.dropTrack(s.selectedTrack)
         _state.update { cur -> cur.dump?.let { cur.copy(dump = it.copy(preset = preset)) } ?: cur }
         scope.launch {
             runCatching { request(Requests.preset(engine, preset)) }
@@ -343,9 +356,11 @@ class DeviceController(context: Context) {
         }
     }
 
-    fun setTrackMix(track: Int, level: Int, mute: Boolean) {
+    fun setTrackMix(track: Int, level: Int, mute: Boolean, record: Boolean = true) {
+        val was = _state.value.tracks?.tracks?.getOrNull(track)?.let { it.level to (it.mute != 0) }
         if (!enqueue(UserEdit.Mix(track, level, mute), continuous = true)) return
         _state.update { s -> s.withTrackMix(track, level, mute) }
+        if (record && was != null && was != (level to mute)) history.record(Change.Mix(track, was, level to mute))
     }
 
     // ------------------------------------------------- FM6 patches (proto v9) ---
@@ -408,6 +423,7 @@ class DeviceController(context: Context) {
     suspend fun fm6Assign(track: Int, slot: Int) {
         val info = _state.value.info ?: return
         val id = info.pe0 + 7
+        history.dropTrack(track)
         request(Requests.trackParamSet(track, id, slot))
         _state.update { s -> if (s.selectedTrack == track) s.withParam(0, id, slot) else s }
     }
@@ -417,6 +433,7 @@ class DeviceController(context: Context) {
         val s = _state.value
         val eng = s.gdesc.indexOfFirst { it?.label == "ENG" }
         if (!s.fm6Supported || eng < 0) return
+        history.dropTrack(track)
         if (s.selectedTrack != track) {
             val t = Parse.tracks(request(Requests.track(track)))
             _state.update { it.copy(tracks = t, selectedTrack = t.sel) }
@@ -478,6 +495,7 @@ class DeviceController(context: Context) {
     suspend fun smpUseOn(track: Int, slot: Int) {
         val s = _state.value
         val info = s.info ?: return
+        history.dropTrack(track)
         if (s.selectedTrack != track) {
             val t = Parse.tracks(request(Requests.track(track)))
             _state.update { it.copy(tracks = t, selectedTrack = t.sel) }
@@ -599,35 +617,39 @@ class DeviceController(context: Context) {
     // ------------------------------------------------- step extras (proto v7/v8) ---
 
     /** Sets step [step]'s nudge, -32..31 in 1/64 of a step (0 = on the grid). Sent at once, not drafted. */
-    fun setStepMicro(step: Int, nudge: Int) {
+    fun setStepMicro(step: Int, nudge: Int, record: Boolean = true) {
         val s = _state.value
         if (s.link != Link.READY || step !in s.micro.indices) return
         val tr = s.selectedTrack
         val v = nudge.coerceIn(-32, 31)
+        if (record && s.micro[step] != v) history.record(Change.Micro(tr, step, s.micro[step], v))
         _state.update { st -> if (st.selectedTrack != tr) st
             else st.copy(micro = st.micro.toMutableList().also { it[step] = v }) }
         scope.launch { runCatching { request(Requests.microSet(tr, step, v)) } }
     }
 
     /** Sets step [step]'s fill condition: 0 always, 1 fill only, 2 never during a fill. */
-    fun setStepFill(step: Int, cond: Int) {
+    fun setStepFill(step: Int, cond: Int, record: Boolean = true) {
         val s = _state.value
         if (s.link != Link.READY || step !in s.fill.indices) return
         val tr = s.selectedTrack
         val v = cond % 3
+        if (record && s.fill[step] != v) history.record(Change.Fill(tr, step, s.fill[step], v))
         _state.update { st -> if (st.selectedTrack != tr) st
             else st.copy(fill = st.fill.toMutableList().also { it[step] = v }) }
         scope.launch { runCatching { request(Requests.fillSet(tr, step, v)) } }
     }
 
     /** Adds/updates the lock on (step, param); [value] = null deletes it. */
-    fun setStepLock(step: Int, param: Int, value: Int?) {
+    fun setStepLock(step: Int, param: Int, value: Int?, record: Boolean = true) {
         val s = _state.value
         if (s.link != Link.READY || s.info == null) return
         val tr = s.selectedTrack
+        val was = s.locks.firstOrNull { it.step == step && it.param == param }?.value
         scope.launch {
             runCatching {
                 val r = Parse.lockSet(request(Requests.lockSet(tr, step, param, value)))
+                if (record && r.rc == 0 && was != r.value) history.record(Change.Lock(tr, step, param, was, r.value))
                 _state.update { st ->
                     if (st.selectedTrack != tr) st else st.copy(
                         locks = when {
@@ -654,11 +676,13 @@ class DeviceController(context: Context) {
         applySynthBatch(listOf(UserEdit.Synth(track, index, step)))
     }
 
-    fun setDrumStep(index: Int, ds: DrumStep) {
+    fun setDrumStep(index: Int, ds: DrumStep, record: Boolean = true) {
         val s = _state.value
         if (s.link != Link.READY || index !in s.drumSteps.indices) return
         val track = s.selectedTrack
         if (s.sequencerMode == SequencerMode.NOW && !enqueue(UserEdit.Drum(index, ds))) return
+        val was = s.drumSteps[index]
+        if (record && was != ds) history.record(Change.Drum(track, index, was.snapshot(), ds.snapshot()))
         val list = s.drumSteps.toMutableList().also { it[index] = ds }
         if (s.sequencerMode == SequencerMode.LATE) synchronized(draftLock) { draftDrum[track] = list }
         _state.update { current ->
@@ -819,11 +843,17 @@ class DeviceController(context: Context) {
         return if (len == n.len) null else n.copy(len = len)
     }
 
-    private fun applySynthBatch(batch: List<UserEdit.Synth>) {
+    private fun applySynthBatch(batch: List<UserEdit.Synth>, record: Boolean = true) {
         val s = _state.value
         if (s.link != Link.READY || batch.isEmpty() ||
             batch.any { it.track != s.selectedTrack || it.index !in s.steps.indices }) return
         if (s.sequencerMode == SequencerMode.NOW && !enqueueBatch(batch)) return
+        if (record) history.transaction {
+            batch.forEach { e ->
+                val was = s.steps[e.index]
+                if (was != e.step) history.record(Change.Synth(e.track, e.index, was.snapshot(), e.step.snapshot()))
+            }
+        }
         val list = s.steps.toMutableList()
         batch.forEach { list[it.index] = it.step }
         if (s.sequencerMode == SequencerMode.LATE) synchronized(draftLock) { draftSynth[s.selectedTrack] = list }
@@ -845,9 +875,9 @@ class DeviceController(context: Context) {
         return true
     }
 
-    fun clearPattern() {
+    fun clearPattern() = history.transaction {
         val s = _state.value
-        if (s.link != Link.READY) return
+        if (s.link != Link.READY) return@transaction
         for (i in 0 until s.patternLength) {
             if (s.drumGrid) {
                 val d = s.drumSteps.getOrNull(i) ?: continue
@@ -866,7 +896,11 @@ class DeviceController(context: Context) {
      * already lying where the group lands win: the dragged hit is dropped there. Only the changed steps go out, one
      * edit each through the normal queue (or Store draft).
      */
-    fun placeDrumCells(keys: Set<Int>, dStep: Int, dLane: Int, copy: Boolean) {
+    fun placeDrumCells(keys: Set<Int>, dStep: Int, dLane: Int, copy: Boolean) = history.transaction {
+        placeDrumCellsNow(keys, dStep, dLane, copy)
+    }
+
+    private fun placeDrumCellsNow(keys: Set<Int>, dStep: Int, dLane: Int, copy: Boolean) {
         val s = _state.value
         if (s.link != Link.READY || !s.drumGrid) return
         val len = s.patternLength
@@ -903,7 +937,9 @@ class DeviceController(context: Context) {
     }
 
     /** Removes the drum hits named by [keys] (step * 16 + lane). */
-    fun deleteDrumCells(keys: Set<Int>) {
+    fun deleteDrumCells(keys: Set<Int>) = history.transaction { deleteDrumCellsNow(keys) }
+
+    private fun deleteDrumCellsNow(keys: Set<Int>) {
         val s = _state.value
         if (s.link != Link.READY || !s.drumGrid) return
         for (i in 0 until s.patternLength) {
@@ -937,7 +973,9 @@ class DeviceController(context: Context) {
      * active pattern grows LEN to fit it — never shrinks it. A drum clip keeps the ratchet of a hit that did not
      * change.
      */
-    fun applyClip(clip: Clip) {
+    fun applyClip(clip: Clip) = history.transaction { applyClipNow(clip) }
+
+    private fun applyClipNow(clip: Clip) {
         var s = _state.value
         if (s.link != Link.READY) return
         if (clip.length > s.patternLength) {
@@ -1056,6 +1094,7 @@ class DeviceController(context: Context) {
 
     fun discardDraftsAndSwitch() {
         clearDrafts()
+        history.drop { it is Change.Synth || it is Change.Drum }
         _state.update { it.copy(sequencerMode = SequencerMode.NOW, draftTracks = emptySet(),
             link = Link.LOADING, status = "Refreshing pattern…",
             steps = emptyList(), drumSteps = emptyList()) }
@@ -1097,6 +1136,46 @@ class DeviceController(context: Context) {
         synchronized(pendingLock) { queuePaused = false }
         _state.update { it.copy(queueError = null) }
         editSignal.trySend(Unit)
+    }
+
+    // ---------------------------------------------------------------- undo / redo ---
+
+    fun undo() = replay(forward = false)
+    fun redo() = replay(forward = true)
+
+    /**
+     * Puts the newest undo (or redo) entry back by sending the other value as a normal edit: the same setters,
+     * the same queue, nothing recorded again. The entry's track is selected first when it is not the open one.
+     */
+    private fun replay(forward: Boolean) {
+        if (_state.value.link != Link.READY) return
+        scope.launch {
+            historyMutex.withLock {
+                val e = (if (forward) history.takeRedo() else history.takeUndo()) ?: return@withLock
+                val ok = try { applyEntry(e, forward) } catch (_: Exception) { false }
+                if (ok) history.done(e, forward) else {
+                    history.putBack(e, forward)
+                    _state.update { it.copy(queueError = "Cannot ${if (forward) "redo" else "undo"} right now") }
+                }
+            }
+        }
+    }
+
+    private suspend fun applyEntry(e: HistoryEntry, forward: Boolean): Boolean {
+        e.track?.let { if (!selectTrackAndWait(it)) return false }
+        val synth = ArrayList<UserEdit.Synth>()
+        for (c in if (forward) e.changes else e.changes.asReversed()) when (c) {
+            is Change.Param -> setParam(c.scope, c.id, if (forward) c.after else c.before, record = false)
+            is Change.Mix -> (if (forward) c.after else c.before).let { setTrackMix(c.tr, it.first, it.second, record = false) }
+            is Change.Synth -> synth.add(UserEdit.Synth(c.tr, c.index, (if (forward) c.after else c.before).snapshot()))
+            is Change.Drum -> setDrumStep(c.index, (if (forward) c.after else c.before).snapshot(), record = false)
+            is Change.Micro -> setStepMicro(c.step, if (forward) c.after else c.before, record = false)
+            is Change.Fill -> setStepFill(c.step, if (forward) c.after else c.before, record = false)
+            is Change.Lock -> setStepLock(c.step, c.param, if (forward) c.after else c.before, record = false)
+            is Change.Custom<*> -> withContext(Dispatchers.Main) { c.replay(forward) }
+        }
+        if (synth.isNotEmpty()) applySynthBatch(synth, record = false)
+        return true
     }
 
     private suspend fun editWorker() {
@@ -1242,6 +1321,7 @@ class DeviceController(context: Context) {
             }
             Cmd.RELOAD -> {
                 if (System.currentTimeMillis() < selfReloadUntil) return
+                history.dropTrack(_state.value.selectedTrack)
                 scope.launch { runCatching { reloadAfterChange() } }
             }
             Cmd.STEP_CHANGED -> {
@@ -1327,6 +1407,7 @@ class DeviceController(context: Context) {
         scope.coroutineContext[Job]?.cancelChildren()
         synchronized(pendingLock) { edits.clear(); editGeneration++ }
         clearDrafts()
+        history.clear()
         conn?.close(); conn = null
         engine.release()
     }

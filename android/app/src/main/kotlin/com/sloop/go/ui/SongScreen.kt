@@ -6,6 +6,8 @@
 package com.sloop.go.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import com.sloop.go.device.Change
+import com.sloop.go.device.EditHistory
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
@@ -63,7 +65,7 @@ import com.sloop.go.device.Link
 import com.sloop.go.proto.Arr
 
 /** The song order being edited (the device's SONG screen); lives in the ViewModel. */
-class SongEditor {
+class SongEditor(private val history: EditHistory? = null) {
     var rows by mutableStateOf<List<Arr.Row>?>(null)
     var loop by mutableStateOf(false)
     var settings: ByteArray? = null
@@ -73,10 +75,16 @@ class SongEditor {
     var isError by mutableStateOf(false)
 
     fun say(text: String, error: Boolean = false) { message = text; isError = error }
+    private var n = 0
     fun edit(f: (MutableList<Arr.Row>) -> Unit) {
-        rows = rows?.toMutableList()?.also(f)
+        val old = rows ?: return
+        rows = old.toMutableList().also(f)
         dirty = true
+        history?.record(Change.Custom<List<Arr.Row>>("song#${n++}", old, rows!!) { r -> rows = r; dirty = true })
     }
+
+    /** The order was read from the device again: older undo steps no longer fit it. */
+    fun reloaded() { history?.dropKey("song") }
 }
 
 private const val LETTERS = "ABCD"
@@ -104,7 +112,7 @@ fun SongScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
     suspend fun read() {
         val r = ctl.songRead()
         if (r == null) { ed.rows = null; ed.say("This firmware has no song order to edit (needs SLOOP 2.5)", true); return }
-        ed.settings = r.first; ed.rows = Arr.group(r.second.entries); ed.loop = r.second.loop; ed.dirty = false
+        ed.settings = r.first; ed.rows = Arr.group(r.second.entries); ed.loop = r.second.loop; ed.dirty = false; ed.reloaded()
         ed.say("Read from the FM-1")
     }
 
