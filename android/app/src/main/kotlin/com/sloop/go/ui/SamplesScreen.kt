@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,6 +40,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FolderOpen
@@ -67,6 +70,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,11 +80,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -270,10 +276,24 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, 
                     }
                 }
             }
-            OutlinedTextField(value = ed.name, singleLine = true,
+            BasicTextField(value = ed.name, singleLine = true,
                 onValueChange = { v -> ed.name = v.uppercase().filter { it.code in 32..126 }.take(8) },
-                label = { Text("NAME") }, textStyle = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.width(104.dp))
+                textStyle = MaterialTheme.typography.bodySmall.copy(color = cs.onSurface,
+                    fontFamily = SloopFontFamily),
+                cursorBrush = SolidColor(cs.primary),
+                modifier = Modifier.width(80.dp).padding(top = 4.dp),
+                decorationBox = { inner ->
+                    Column {
+                        Box {
+                            if (ed.name.isEmpty()) Text("NAME",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = SloopFontFamily, color = cs.onSurfaceVariant)
+                            inner()
+                        }
+                        Spacer(Modifier.height(3.dp))
+                        Box(Modifier.height(1.dp).fillMaxWidth().background(cs.outline))
+                    }
+                })
             val ready = !ed.busy && ed.name.isNotBlank() && when (ed.mode) {
                 SamplesEditor.Mode.FILES -> ed.files.isNotEmpty() &&
                     ed.files.sumOf { (it.s.size + 1) / 2 } <= Smp.MAX_DATA
@@ -302,14 +322,12 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, 
                 }) { Text("Send") }
             Text("Play on", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
             for (t in 0 until minOf(3, state.info.ntrk)) {
-                OutlinedButton(enabled = !ed.busy && cur != null && cur.zones > 0,
-                    modifier = Modifier.height(32.dp), contentPadding = tight,
-                    onClick = {
-                        op {
-                            ctl.smpUseOn(t, ed.slot)
-                            ed.say("Track ${t + 1}: SAMPLE, SET = USR${ed.slot + 1}")
-                        }
-                    }) { Text("${t + 1}") }
+                HoldButton("${t + 1}", enabled = !ed.busy && cur != null && cur.zones > 0) {
+                    op {
+                        ctl.smpUseOn(t, ed.slot)
+                        ed.say("Track ${t + 1}: SAMPLE, SET = USR${ed.slot + 1}")
+                    }
+                }
             }
         }
 
@@ -619,50 +637,63 @@ private fun ChopPane(ed: SamplesEditor) {
         }
         if (x == null) return@Column
 
+        // ---- the picked chop: one panel — who it is, its length, its marker spot ----
         val c = chops.getOrNull(ed.sel)
         if (c != null) {
+            val step = { ms: Double -> (ms * Smp.RATE / 1000).toInt() }
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                .background(cs.surfaceVariant.copy(alpha = 0.35f))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Chop ${c.i + 1}", style = MaterialTheme.typography.bodySmall,
-                        color = cs.primary)
-                    Text("keep", style = MaterialTheme.typography.labelSmall,
-                        color = cs.onSurfaceVariant)
-                    Switch(checked = !c.off, onCheckedChange = { ed.keep(c.i, it) })
-                    IconButton(onClick = { Audio.play(x, c.start, c.end) }, Modifier.size(32.dp)) {
-                        Icon(Icons.Filled.PlayArrow, "play", Modifier.size(18.dp), tint = cs.primary)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    IconButton(onClick = { Audio.play(x, c.start, c.end) }, Modifier.size(36.dp)) {
+                        Icon(Icons.Filled.PlayArrow, "play", Modifier.size(20.dp), tint = cs.primary)
                     }
-                    TextButton(onClick = { ed.removeMark(c.i) }) { Text("Delete") }
+                    Text("Chop ${c.i + 1}", style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold, color = cs.primary)
+                    keyOf[c.i]?.let {
+                        Text("· ${Smp.noteName(it)}", style = MaterialTheme.typography.bodySmall,
+                            fontFamily = SloopFontFamily, color = cs.onSurfaceVariant)
+                    }
                     Spacer(Modifier.weight(1f))
                     Text("${secs(c.len)} / ${secs(c.full - c.start)}",
                         style = MaterialTheme.typography.labelSmall, fontFamily = SloopFontFamily,
                         color = cs.onSurfaceVariant)
+                    Text("keep", style = MaterialTheme.typography.labelSmall,
+                        color = cs.onSurfaceVariant)
+                    Switch(checked = !c.off, onCheckedChange = { ed.keep(c.i, it) })
+                    IconButton(onClick = { ed.removeMark(c.i) }, Modifier.size(36.dp)) {
+                        Icon(Icons.Filled.Delete, "delete", Modifier.size(18.dp), tint = cs.error)
+                    }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("len", style = MaterialTheme.typography.labelSmall,
                         color = cs.onSurfaceVariant)
                     Slider(value = c.len.toFloat(),
                         onValueChange = { ed.setChopLen(c.i, it.toInt()) },
                         valueRange = 0f..maxOf(1f, (c.full - c.start).toFloat()),
                         modifier = Modifier.weight(1f))
+                    StepButton("‹") { ed.setChopLen(c.i, c.len - step(10.0)) }
+                    StepButton("›") { ed.setChopLen(c.i, c.len + step(10.0)) }
                     TextButton(onClick = { ed.setChopLen(c.i, 0) },
                         enabled = c.end < c.full) { Text("Full") }
                 }
-                // marker position: fine nudging (1 / 10 / 50 ms) for thumbs
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("mark", style = MaterialTheme.typography.labelSmall,
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("pos", style = MaterialTheme.typography.labelSmall,
                         color = cs.onSurfaceVariant)
-                    val step = { ms: Double -> (ms * Smp.RATE / 1000).toInt() }
-                    TextButton(onClick = { ed.moveMark(c.i, c.start - step(50.0)) }) { Text("«") }
-                    TextButton(onClick = { ed.moveMark(c.i, c.start - step(10.0)) }) { Text("‹") }
-                    TextButton(onClick = { ed.moveMark(c.i, c.start - step(1.0)) }) { Text("·") }
+                    StepButton("«") { ed.moveMark(c.i, c.start - step(50.0)) }
+                    StepButton("‹") { ed.moveMark(c.i, c.start - step(10.0)) }
                     Text("%.3f s".format(c.start.toDouble() / Smp.RATE),
                         style = MaterialTheme.typography.labelSmall, fontFamily = SloopFontFamily,
                         color = cs.onSurfaceVariant)
-                    TextButton(onClick = { ed.moveMark(c.i, c.start + step(1.0)) }) { Text("·") }
-                    TextButton(onClick = { ed.moveMark(c.i, c.start + step(10.0)) }) { Text("›") }
-                    TextButton(onClick = { ed.moveMark(c.i, c.start + step(50.0)) }) { Text("»") }
+                    StepButton("›") { ed.moveMark(c.i, c.start + step(10.0)) }
+                    StepButton("»") { ed.moveMark(c.i, c.start + step(50.0)) }
                 }
             }
+        }
         // ---- mark tools: compact buttons and pickers packed into one wrapping row ----
         var bpm by remember { mutableStateOf("90") }
         var div by remember { mutableStateOf(1.0) }
@@ -679,10 +710,19 @@ private fun ChopPane(ed: SamplesEditor) {
                 ed.setMarkers(Smp.chopGrid(region.first, region.second,
                     bpm.toDoubleOrNull()?.coerceAtLeast(40.0) ?: 90.0, div).toList())
             }) { Text("Grid") }
-            OutlinedTextField(value = bpm,
-                onValueChange = { bpm = it.filter { c -> c.isDigit() || c == '.' }.take(5) },
-                modifier = Modifier.width(64.dp), singleLine = true,
-                label = { Text("BPM") }, textStyle = MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.height(40.dp).clip(RoundedCornerShape(8.dp))
+                    .background(cs.surfaceVariant).padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("BPM", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
+                BasicTextField(value = bpm, singleLine = true,
+                    onValueChange = { bpm = it.filter { c -> c.isDigit() || c == '.' }.take(5) },
+                    textStyle = MaterialTheme.typography.bodySmall.copy(color = cs.onSurface,
+                        fontFamily = SloopFontFamily),
+                    cursorBrush = SolidColor(cs.primary),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.width(40.dp))
+            }
             MiniPicker("div", listOf("1 bar" to 4.0, "1/2" to 2.0, "1/4" to 1.0,
                 "1/8" to 0.5, "1/16" to 0.25), div) { div = it }
             OutlinedButton(onClick = {
@@ -717,6 +757,51 @@ private fun ChopPane(ed: SamplesEditor) {
                 TextButton(onClick = { ed.setMarkers(emptyList()) }) { Text("Clear") }
             }
         }
+    }
+}
+
+/** A small square nudge button for the chop panel. */
+@Composable
+private fun StepButton(label: String, onClick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Box(Modifier.width(34.dp).height(32.dp).clip(RoundedCornerShape(8.dp))
+        .background(cs.surfaceVariant).clickable { onClick() },
+        contentAlignment = Alignment.Center) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = cs.onSurface)
+    }
+}
+
+/** Press-and-hold pad: fills left to right and fires only once full (~0.5 s). */
+@Composable
+private fun HoldButton(label: String, enabled: Boolean, onHold: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    var held by remember { mutableStateOf(false) }
+    var prog by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(held) {
+        if (!held) { prog = 0f; return@LaunchedEffect }
+        val t0 = System.nanoTime()
+        while (held) {
+            prog = ((System.nanoTime() - t0) / 5e8).toFloat().coerceAtMost(1f)
+            if (prog >= 1f) { held = false; prog = 0f; onHold(); break }
+            delay(16)
+        }
+    }
+    Box(Modifier.width(36.dp).height(32.dp).clip(RoundedCornerShape(8.dp))
+        .background(cs.surfaceVariant.copy(alpha = if (enabled) 1f else 0.4f))
+        .pointerInput(enabled) {
+            if (!enabled) return@pointerInput
+            detectTapGestures(onPress = {
+                held = true
+                tryAwaitRelease()
+                held = false
+            })
+        }, contentAlignment = Alignment.Center) {
+        if (prog > 0f)
+            Box(Modifier.align(Alignment.CenterStart).fillMaxHeight()
+                .fillMaxWidth(prog).background(cs.primary.copy(alpha = 0.55f)))
+        Text(label, style = MaterialTheme.typography.labelSmall,
+            fontFamily = SloopFontFamily,
+            color = if (enabled) cs.onSurface else cs.onSurfaceVariant.copy(alpha = 0.5f))
     }
 }
 
