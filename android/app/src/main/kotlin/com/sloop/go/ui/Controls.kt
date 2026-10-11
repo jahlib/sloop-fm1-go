@@ -58,9 +58,13 @@ import kotlin.math.sin
 
 /** A single parameter, rendered as a slider / switch / chip row depending on its format. */
 @Composable
-fun ParamControl(desc: Desc?, value: Int, text: String? = null, onFinished: (() -> Unit)? = null, onChange: (Int) -> Unit) {
+fun ParamControl(desc: Desc?, value: Int, text: String? = null, onFinished: (() -> Unit)? = null,
+                 onLongPress: (() -> Unit)? = null, onChange: (Int) -> Unit) {
     if (desc == null) return
-    Column(Modifier.fillMaxWidth().padding(horizontal = 3.dp, vertical = 4.dp),
+    val longPress by rememberUpdatedState(onLongPress)
+    Column(Modifier.fillMaxWidth().then(if (onLongPress == null) Modifier else Modifier.pointerInput(desc.id) {
+        detectTapGestures(onLongPress = { longPress?.invoke() })
+    }).padding(horizontal = 3.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
         Text(desc.label.ifBlank { "P${desc.id}" }, style = MaterialTheme.typography.labelSmall,
             maxLines = 1, overflow = TextOverflow.Ellipsis)

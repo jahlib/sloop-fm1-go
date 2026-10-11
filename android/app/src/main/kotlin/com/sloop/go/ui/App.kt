@@ -3,6 +3,9 @@
 // see NOTICE.md.
 package com.sloop.go.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -20,6 +23,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -99,6 +109,9 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
     val state by vm.state.collectAsState()
     var tab by remember { mutableStateOf(Tab.PARAMS) }
     var menuOpen by remember { mutableStateOf(false) }
+    val ctx = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    val favs = remember { Favorites(ctx.getSharedPreferences("favorites", 0)) }
 
     LaunchedEffect(Unit) {
         vm.refreshDevices()
@@ -139,8 +152,14 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
                         else LocalContentColor.current)
             }
             Box {
-                IconButton(onClick = { menuOpen = true }, enabled = state.link == Link.READY) {
-                    Icon(Icons.Filled.Menu, contentDescription = "Navigation")
+                val on = state.link == Link.READY
+                Box(Modifier.size(48.dp).pointerInput(on) {
+                    detectTapGestures(onTap = { if (on) menuOpen = true }, onLongPress = {
+                        if (on) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); favs.toggle() }
+                    })
+                }, contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Menu, contentDescription = "Navigation",
+                        tint = LocalContentColor.current.copy(alpha = if (on) 1f else 0.38f))
                 }
                 navMenu()
             }
@@ -158,12 +177,15 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
         }
     }
 
+    CompositionLocalProvider(LocalFavorites provides favs) {
     Scaffold { padding ->
+      Row(Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)) {
+        AnimatedVisibility(favs.open && state.link == Link.READY, enter = expandHorizontally(),
+            exit = shrinkHorizontally()) { FavoritesPanel(vm, state, favs) }
         Box(
             Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .background(MaterialTheme.colorScheme.background),
+                .weight(1f)
+                .fillMaxHeight(),
         ) {
             when (tab) {
                 Tab.PARAMS -> ParamsScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
@@ -189,6 +211,8 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
                 }
             }
         }
+      }
+    }
     }
     UpdateDialog(vm)
 }

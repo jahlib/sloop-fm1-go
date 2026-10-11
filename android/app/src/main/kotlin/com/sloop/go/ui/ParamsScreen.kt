@@ -48,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -78,6 +79,13 @@ private val ESYNC_NAMES = arrayOf(
 private data class Group(val title: String, val pages: List<Page>)
 
 private val PINNED = setOf("Global", "Master")
+private val RARE = setOf("MIDI", "Texture")
+
+private fun applyOrder(groups: List<Group>, saved: String?): List<Group> {
+    val order = saved?.split(",") ?: return groups
+    val (pinned, rest) = groups.partition { it.title in PINNED }
+    return pinned + rest.sortedBy { order.indexOf(it.title).let { i -> if (i < 0) Int.MAX_VALUE else i } }
+}
 
 private fun layout(pe0: Int): List<Group> = listOf(
     Group("Global", listOf(Page("GLOBAL", 1, listOf(0, 1, 2, 3)))),
@@ -107,10 +115,10 @@ private fun layout(pe0: Int): List<Group> = listOf(
     Group("FX", listOfNotNull(
         Page("FX", 0, listOf(33, 34, 35, 36)),
         Page("SLICER", 0, listOf(45, 46, 47, 48)),
-        if (pe0 >= PE0_26) Page("INSERT", 0, listOf(53, 54, 55, 56)) else null,
-        if (pe0 >= PE0_26) Page("INSERT 2", 0, listOf(57)) else null,
         Page("DELAY", 1, listOf(4, 5, 6, 7)),
         Page("REVERB / CHORUS", 1, listOf(8, 9, 10, 11)),
+        if (pe0 >= PE0_26) Page("INSERT", 0, listOf(53, 54, 55, 56)) else null,
+        if (pe0 >= PE0_26) Page("INSERT 2", 0, listOf(57)) else null,
     )),
     Group("Scale", listOf(
         Page("SEL", 0, listOf(25, 26, 27, 49)),
@@ -135,8 +143,10 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
     var picker by remember(state.selectedTrack) { mutableStateOf(false) }
     if (picker) PresetPicker(vm, state) { picker = false }
 
-    var groups by remember(state.selectedTrack) { mutableStateOf(layout(info.pe0)) }
-    var collapsed by remember(state.selectedTrack) { mutableStateOf(setOf<String>()) }
+    val prefs = LocalContext.current.getSharedPreferences("sound_layout", 0)
+    val addFav = rememberFavAdder()
+    var groups by remember(info.pe0) { mutableStateOf(applyOrder(layout(info.pe0), prefs.getString("order", null))) }
+    var collapsed by remember { mutableStateOf(prefs.getStringSet("collapsed", null) ?: RARE) }
     val gridState = rememberLazyStaggeredGridState()
     var dragIndex by remember { mutableIntStateOf(-1) }
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
@@ -157,6 +167,7 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                     val g = groups.toMutableList()
                     g.add(t, g.removeAt(dragIndex))
                     groups = g
+                    prefs.edit().putString("order", g.joinToString(",") { it.title }).apply()
                 }
             }
         }
@@ -272,6 +283,7 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                         detectTapGestures(onTap = {
                             collapsed = if (group.title in collapsed) collapsed - group.title
                                 else collapsed + group.title
+                            prefs.edit().putStringSet("collapsed", collapsed).apply()
                         })
                     }.pointerInput(group.title) {
                         detectDragGesturesAfterLongPress(
@@ -306,8 +318,10 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                         }
                         if (rows.isEmpty()) null else page.title to rows
                     }
-                    pages.forEachIndexed { pi, (_, rows) ->
+                    pages.forEachIndexed { pi, (title, rows) ->
                         if (pi > 0) HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 2.dp))
+                        if (pages.size > 1) Text(title, Modifier.padding(start = 14.dp, top = 2.dp),
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         rows.chunked(4).forEach { groupRows ->
                             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                                 groupRows.forEach { (scope, id, d) ->
@@ -315,7 +329,8 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                                         val value = if (scope == 0) state.paramValue(id) else state.globalValue(id)
                                         if (scope == 1 && id == 0) TextParamControl(d, value) { v ->
                                             vm.controller.setParam(scope, id, v)
-                                        } else ParamControl(d, value, text = esyncText(state, v26, scope, id, value)) { v ->
+                                        } else ParamControl(d, value, text = esyncText(state, v26, scope, id, value),
+                                            onLongPress = { addFav(scope, id) }) { v ->
                                             vm.controller.setParam(scope, id, v)
                                         }
                                     }

@@ -450,7 +450,7 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                                 Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                                     row.forEach { it ->
                                         Box(Modifier.weight(1f)) {
-                                            ParamControl(it.desc, it.value, it.text, it.onFinished, it.onChange)
+                                            ParamControl(it.desc, it.value, it.text, it.onFinished, onChange = it.onChange)
                                         }
                                     }
                                     repeat(4 - row.size) { Box(Modifier.weight(1f)) }
