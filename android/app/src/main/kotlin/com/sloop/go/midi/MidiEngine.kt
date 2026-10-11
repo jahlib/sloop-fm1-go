@@ -100,7 +100,10 @@ class MidiEngine(private val context: Context) {
         info.properties.getString(MidiDeviceInfo.PROPERTY_MANUFACTURER) ?: ""
 
     /** Opens the device by id and wires up receive. Returns null on failure. */
-    suspend fun open(deviceId: Int, onReceive: (ByteArray) -> Unit, onLost: () -> Unit): MidiConnection? {
+    suspend fun open(
+        deviceId: Int, onReceive: (ByteArray) -> Unit, onLost: () -> Unit,
+        onNote: ((channel: Int, note: Int, on: Boolean) -> Unit)? = null,
+    ): MidiConnection? {
         val mm = manager ?: return null
         val info = infos().firstOrNull { it.id == deviceId } ?: return null
         return suspendCancellableCoroutine { cont ->
@@ -114,7 +117,7 @@ class MidiEngine(private val context: Context) {
                 val inPort = inNum?.let { device.openInputPort(it) }
                 val outPort = outNum?.let { device.openOutputPort(it) }
                 val receiver = if (outPort != null) {
-                    SysexReceiver(onReceive).also { outPort.connect(it) }
+                    SysexReceiver(onReceive, onNote).also { outPort.connect(it) }
                 } else null
                 if (inPort == null && outPort == null) {
                     try { device.close() } catch (_: Exception) {}
@@ -168,10 +171,25 @@ class MidiEngine(private val context: Context) {
         ioThread.quitSafely()
     }
 
-    /** Reassembles complete SysEx frames (F0..F7). Non-SysEx bytes are ignored. */
-    private class SysexReceiver(private val onFrame: (ByteArray) -> Unit) : MidiReceiver() {
+    /** Reassembles complete SysEx frames (F0..F7) and reports note on / off; other bytes are ignored. */
+    private class SysexReceiver(
+        private val onFrame: (ByteArray) -> Unit,
+        private val onNote: ((Int, Int, Boolean) -> Unit)?,
+    ) : MidiReceiver() {
         private val buf = ArrayList<Byte>(640)
         private var inSysex = false
+        private var status = 0   // running status of a channel message
+        private var d1 = -1      // its first data byte, once read
+
+        private fun data(b: Int) {
+            val kind = status and 0xF0
+            if (kind == 0xC0 || kind == 0xD0) return
+            if (d1 < 0) { d1 = b; return }
+            val note = d1
+            d1 = -1
+            if (kind == 0x90) onNote?.invoke(status and 15, note, b > 0)
+            else if (kind == 0x80) onNote?.invoke(status and 15, note, false)
+        }
 
         override fun onSend(msg: ByteArray, offset: Int, count: Int, timestamp: Long) {
             var i = offset
@@ -180,8 +198,8 @@ class MidiEngine(private val context: Context) {
                 val b = msg[i].toInt() and 0xFF
                 when {
                     b >= 0xF8 -> Unit
-                    b == 0xF0 -> { inSysex = true; buf.clear(); buf.add(msg[i]) }
-                    inSysex && b in 0x80..0xF6 -> { inSysex = false; buf.clear() }
+                    b == 0xF0 -> { inSysex = true; status = 0; buf.clear(); buf.add(msg[i]) }
+                    inSysex && b in 0x80..0xF6 -> { inSysex = false; buf.clear(); status = if (b < 0xF0) b else 0; d1 = -1 }
                     inSysex -> {
                         buf.add(msg[i])
                         if (b == 0xF7) {
@@ -190,6 +208,9 @@ class MidiEngine(private val context: Context) {
                             buf.clear()
                         }
                     }
+                    b in 0x80..0xEF -> { status = b; d1 = -1 }
+                    b >= 0xF0 -> status = 0
+                    status != 0 -> data(b)
                 }
                 i++
             }

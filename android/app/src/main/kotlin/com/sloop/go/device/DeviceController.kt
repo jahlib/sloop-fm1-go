@@ -65,6 +65,10 @@ class DeviceController(context: Context) {
     private val _state = MutableStateFlow(DeviceState())
     val state: StateFlow<DeviceState> = _state.asStateFlow()
 
+    /** The notes sounding on the FM-1 now (keys pressed, and the sequencer's with MIDI OUT = SEQ), from its USB MIDI out. */
+    private val _live = MutableStateFlow(LiveNotes())
+    val live: StateFlow<LiveNotes> = _live.asStateFlow()
+
     /** Undo / redo, in RAM only: every edit is also noted here and is put back through the very same queue. */
     val history = EditHistory(onChange = { u, r -> _state.update { it.copy(canUndo = u, canRedo = r) } })
     private val historyMutex = Mutex()
@@ -120,7 +124,9 @@ class DeviceController(context: Context) {
             disconnectInternal(silent = true)
             _state.value = DeviceState(link = Link.CONNECTING, status = "Connecting…")
             engine.requestUsbPermission(appContext)
-            val c = engine.open(deviceId, onReceive = ::onFrame, onLost = { onLost() })
+            _live.value = LiveNotes()
+            val c = engine.open(deviceId, onReceive = ::onFrame, onLost = { onLost() },
+                onNote = { ch, note, on -> _live.update { it.with(ch, note, on) } })
             if (c == null) {
                 _state.update { it.copy(link = Link.DISCONNECTED, status = "Could not open device") }
                 return@launch
@@ -151,6 +157,7 @@ class DeviceController(context: Context) {
         linkMutex.withLockSafe { }
         try { if (conn != null) runCatching { request(Requests.watch(0), quiet = true) } } catch (_: Exception) {}
         conn?.close(); conn = null
+        _live.value = LiveNotes()
         val unsent = synchronized(pendingLock) {
             val count = edits.size
             edits.clear(); sending = false; queuePaused = false; editGeneration++
@@ -166,6 +173,7 @@ class DeviceController(context: Context) {
     private fun onLost() {
         scope.launch {
             conn?.close(); conn = null
+            _live.value = LiveNotes()
             keepAlive?.cancel(); keepAlive = null
             val unsent = synchronized(pendingLock) {
                 val count = edits.size

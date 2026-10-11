@@ -57,7 +57,8 @@ reported and discarded on disconnect. App-process death also loses queued edits 
 - **Device**: pick/connect/disconnect a MIDI device, firmware info.
 
 Also: **FM6 patches** (list/load/store/erase, DX7 SysEx import/export from phone storage, full six-operator editor) and, for
-SLOOP 2.4, per-step nudge / fill / parameter locks in the step editor.
+SLOOP 2.4, per-step nudge / fill / parameter locks in the step editor. SLOOP 2.6's new parameters (INSERT, LFO 2,
+ENV SYNC, ANALOG filter TYPE, global MIDI and TEXTURE) are on the Sound page; they only appear on a 2.6 device.
 
 Not yet ported: projects, user-preset bank, sample upload, backup/restore, live playhead.
 The protocol for them is documented in `web/EDITOR_PROTOCOL.md` of [isod89/sloop-fm1](https://github.com/isod89/sloop-fm1).
@@ -99,7 +100,7 @@ cd android
 
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`. Or copy it to the phone and tap it
 (allow "install from unknown sources"). Current `applicationId` is `com.sloop.go`, `versionCode`
-is 30 and `versionName` is 1.7.4. For each major update increment `versionCode` and update
+is 31 and `versionName` is 1.7.5. For each major update increment `versionCode` and update
 `versionName` in `android/app/build.gradle`, and update the APK link in the root `README.md`
 to the new release (`releases/download/<tag>/sloop_go_<version>.apk`); keep the same package
 and signing key to install updates over existing installations with `adb install -r`.

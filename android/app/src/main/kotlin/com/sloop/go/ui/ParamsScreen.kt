@@ -59,12 +59,22 @@ import com.sloop.go.proto.Desc
  * A page inside a group: a title, a scope (0 = P_*, 1 = G_*) and the parameter ids it shows.
  * [trackIds] are ids in the page that are track parameters (P_*) although the page's scope is global.
  */
-private data class Page(val title: String, val scope: Int, val ids: List<Int>, val trackIds: Set<Int> = emptySet())
+private data class Page(
+    val title: String, val scope: Int, val ids: List<Int>, val trackIds: Set<Int> = emptySet(),
+    val onlyEngine: Int? = null,
+)
 
 private const val P_STRUM = 51  // SLOOP 2.4: chord strum (ms per note) and voice leading, after TFLT
 private const val P_VLEAD = 52
 private const val G_DRDLY = 32  // SLOOP 2.5: the drums' delay send (absent on 2.4: gdesc has no entry)
 private const val P_TFLT = 50   // SLOOP 2.4: the track's filter; absent on older firmware (pe0 <= 50)
+private const val PE0_26 = 63   // SLOOP 2.6: ten track parameters (INSERT 53..57, FTYPE 58, ESYNC 59, LFO 2 60..62) came before P_E0
+private const val P_ESYNC = 59  // ENV SYNC: ATK (1), DEC (2) and REL (4) are note values of the tempo
+private const val P_LSYNC = 60  // LFO 2 SYNC: its label is also a skipped global's
+private val ESYNC_NAMES = arrayOf(
+    "0", "1/64T", "1/64", "1/32T", "1/64D", "1/32", "1/16T", "1/32D", "1/16", "1/8T", "1/16D", "1/8", "1/4T", "1/8D",
+    "1/4", "1/2T", "1/4D", "1/2", "1/1T", "1/2D", "1/1", "1/1D", "2BAR", "3BAR", "4BAR",
+)
 private data class Group(val title: String, val pages: List<Page>)
 
 private val PINNED = setOf("Global", "Master")
@@ -75,20 +85,30 @@ private fun layout(pe0: Int): List<Group> = listOf(
         if (pe0 > P_TFLT) Page("MASTER", 1, listOf(27, 28, 29, P_TFLT), setOf(P_TFLT))
         else Page("MASTER", 1, listOf(27, 28, 29)),
     )),
-    Group("Envelope", listOf(Page("ENV", 0, listOf(1, 2, 3, 4)), Page("ENV DEST", 0, listOf(5, 6, 7, 8)))),
-    Group("LFO", listOf(Page("LFO", 0, listOf(9, 10, 11, 12)), Page("LFO DEST", 0, listOf(13, 14, 15, 16)))),
-    Group("Engine edit", listOf(
+    Group("Envelope", listOfNotNull(
+        Page("ENV", 0, listOf(1, 2, 3, 4)), Page("ENV DEST", 0, listOf(5, 6, 7, 8)),
+        if (pe0 >= PE0_26) Page("ENV SYNC", 0, listOf(P_ESYNC)) else null,
+    )),
+    Group("LFO", listOfNotNull(
+        Page("LFO", 0, listOf(9, 10, 11, 12)),
+        if (pe0 >= PE0_26) Page("LFO 2", 0, listOf(P_LSYNC, 61, 62)) else null,
+        Page("LFO DEST", 0, listOf(13, 14, 15, 16)),
+    )),
+    Group("Engine edit", listOfNotNull(
         Page("EDIT 1", 0, listOf(pe0, pe0 + 1, pe0 + 2, pe0 + 3)),
         Page("EDIT 2", 0, listOf(pe0 + 4, pe0 + 5, pe0 + 6, pe0 + 7)),
+        if (pe0 >= PE0_26) Page("FILTER", 0, listOf(58), onlyEngine = 0) else null,   // ANALOG's filter TYPE
     )),
     Group("Voice", listOf(
         Page("LEVEL", 0, listOf(0)),
         Page("VOICE", 0, listOf(37, 38, 41, 42)),
         Page("VOICE 2", 0, listOf(43, 44, 39, 40)),
     )),
-    Group("FX", listOf(
+    Group("FX", listOfNotNull(
         Page("FX", 0, listOf(33, 34, 35, 36)),
         Page("SLICER", 0, listOf(45, 46, 47, 48)),
+        if (pe0 >= PE0_26) Page("INSERT", 0, listOf(53, 54, 55, 56)) else null,
+        if (pe0 >= PE0_26) Page("INSERT 2", 0, listOf(57)) else null,
         Page("DELAY", 1, listOf(4, 5, 6, 7)),
         Page("REVERB / CHORUS", 1, listOf(8, 9, 10, 11)),
     )),
@@ -99,7 +119,11 @@ private fun layout(pe0: Int): List<Group> = listOf(
     Group("Arp", listOf(Page("ARP", 0, listOf(17, 18, 19, 20)), Page("ARP 2", 0, listOf(21, 22, 23, 24)))),
     Group("Pattern", listOf(Page("PATTERN", 0, listOf(29, 30, 31, 32)))),
     Group("Drums", listOf(Page("DRUMS", 1, listOf(24, 25, 26, G_DRDLY)))),
-)
+) + (if (pe0 >= PE0_26) listOf(
+        // GLO > MIDI: each track's channel (the drums' CH4 is G_DRCH, 24), OTHER and BEND; IN / OUT are the FM-1's own
+        Group("MIDI", listOf(Page("MIDI", 1, listOf(33, 34, 35, 24)), Page("MIDI 2", 1, listOf(36, 44)))),
+        Group("Texture", listOf(Page("TEXTURE", 1, listOf(37, 38, 39, 40)), Page("TEXTURE 2", 1, listOf(41, 42, 43)))),
+    ) else emptyList())
 
 @Composable
 fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
@@ -271,11 +295,13 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                         )
                     }
                     if (closed) return@Card
+                    val v26 = info.pe0 >= PE0_26
                     val pages = group.pages.mapNotNull { page ->
+                        if (page.onlyEngine != null && state.dump?.engine != page.onlyEngine) return@mapNotNull null
                         val rows = page.ids.mapNotNull { id ->
                             val sc = if (id in page.trackIds) 0 else page.scope
                             val d0 = descOf(state, sc, id) ?: return@mapNotNull null
-                            if (!shouldShow(d0)) return@mapNotNull null
+                            if (!shouldShow(d0, v26 && sc == 0 && id == P_LSYNC)) return@mapNotNull null
                             Triple(sc, id, if (sc == 0 && id == P_TFLT && page.title == "MASTER") d0.copy(label = "TFLT") else d0)
                         }
                         if (rows.isEmpty()) null else page.title to rows
@@ -289,7 +315,9 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                                         val value = if (scope == 0) state.paramValue(id) else state.globalValue(id)
                                         if (scope == 1 && id == 0) TextParamControl(d, value) { v ->
                                             vm.controller.setParam(scope, id, v)
-                                        } else ParamControl(d, value) { v -> vm.controller.setParam(scope, id, v) }
+                                        } else ParamControl(d, value, text = esyncText(state, v26, scope, id, value)) { v ->
+                                            vm.controller.setParam(scope, id, v)
+                                        }
                                     }
                                 }
                                 repeat(4 - groupRows.size) { Box(Modifier.weight(1f)) }
@@ -305,10 +333,16 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
 private fun descOf(state: DeviceState, scope: Int, id: Int): Desc? =
     if (scope == 0) state.pdesc.getOrNull(id) else state.gdesc.getOrNull(id)
 
-/** Hide fixed (min==max) non-interactive params and action placeholders. */
-private fun shouldShow(d: Desc): Boolean {
+/** ENV SYNC on (2.6): ATK / DEC / REL hold note values, not milliseconds (firmware params.c esync_idx). */
+private fun esyncText(state: DeviceState, v26: Boolean, scope: Int, id: Int, value: Int): String? =
+    if (v26 && scope == 0 && (id == 1 || id == 2 || id == 4) && state.paramValue(P_ESYNC) != 0)
+        ESYNC_NAMES[(value and 127) * ESYNC_NAMES.size shr 7]
+    else null
+
+/** Hide fixed (min==max) non-interactive params and action placeholders; [keep]: shown whatever its label. */
+private fun shouldShow(d: Desc, keep: Boolean = false): Boolean {
     if (d.label.isBlank()) return false
-    if (d.label in SKIP) return false
+    if (d.label in SKIP && !keep) return false
     if (d.min == d.max && d.names.isEmpty()) return false
     return true
 }

@@ -24,7 +24,7 @@ so edits reach the FM-1 immediately.
 
 ## Install on your phone
 
-**⬇ [Download sloop_go_1.7.4.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.7.4/sloop_go_1.7.4.apk)**
+**⬇ [Download sloop_go_1.7.5.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.7.5/sloop_go_1.7.5.apk)**
 — other versions live on the [Releases](https://github.com/jahlib/sloop-fm1-go/releases) page.
 
 0. You need an **M-VAVE FM-1** device with the latest [**SLOOP** firmware](https://github.com/isod89/sloop-fm1)
@@ -51,12 +51,16 @@ from Sloop Go. The **Updates** block at the bottom of the **Device** page runs t
 ## Features
 
 - **Sound** — all sound parameters in collapsible blocks with touch knobs, engine / kit and preset pickers, track selector.
+  SLOOP 2.6 adds the per-track INSERT effect, LFO 2 (SYNC / TRIG / POL), ENV SYNC (note values for ATK / DEC / REL),
+  ANALOG's filter TYPE, and the global MIDI (channel per track) and TEXTURE blocks; the INSERT values can be locked on a step.
 - **Sequencer** — drum grid and synth piano-roll with pinch zoom and a single icon toolbar, Live / Store (draft)
   modes, voice modes, step nudge / fill / parameter locks (SLOOP 2.4); **Select** mode in the piano roll and the drum
   grid (frame-select — or just hold empty space in the piano roll, drag the whole figure, stretch them all by one
   note's edge, hold to clone it, existing notes win on overlap), ±12 transpose with auto-fit (only the selected notes
   in Select mode); in the drum grid **hold a lane name** (e.g. KICK) and drag it onto another lane to move all of its
-  hits at once (kick → kick 2, open hat → closed hat…); **Save / Load** of note
+  hits at once (kick → kick 2, open hat → closed hat…); the note names on the left (piano roll) and the lane names
+  (drum grid) light up while the FM-1 sounds them — keys pressed on it, or the sequencer's with MIDI OUT = SEQ;
+  **Save / Load** of note
   patterns as MIDI files kept inside the app (separate piano-roll and drum lists with previews; tap to load, or hold
   one and drag it onto the piano roll; 30 ready drum and 40 ready piano patterns included, many of them 32 or 64 steps —
 loading a longer clip grows the pattern length to fit it). Only the notes are stored,
@@ -86,7 +90,7 @@ loading a longer clip grows the pattern length to fit it). Only the notes are st
   value through the same request queue as a normal edit. The history is dropped on disconnect, and parts of it when an
   engine / preset swap makes old values meaningless. Flash writes (Store, sample upload / erase) are not undoable.
 
-Requires a phone with USB host (OTG) and a USB-C cable to the FM-1. Written for SLOOP 2.4 (editor protocol v9);
+Requires a phone with USB host (OTG) and a USB-C cable to the FM-1. Follows SLOOP 2.6 (editor protocol v10);
 features that need newer firmware are hidden or disabled on older SLOOP.
 
 ## Build

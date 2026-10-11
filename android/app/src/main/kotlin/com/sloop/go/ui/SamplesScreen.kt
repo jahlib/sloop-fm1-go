@@ -61,7 +61,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -657,9 +656,6 @@ private fun ChopPane(ed: SamplesEditor) {
                             fontFamily = SloopFontFamily, color = cs.onSurfaceVariant)
                     }
                     Spacer(Modifier.weight(1f))
-                    Text("${secs(c.len)} / ${secs(c.full - c.start)}",
-                        style = MaterialTheme.typography.labelSmall, fontFamily = SloopFontFamily,
-                        color = cs.onSurfaceVariant)
                     Text("keep", style = MaterialTheme.typography.labelSmall,
                         color = cs.onSurfaceVariant)
                     Switch(checked = !c.off, onCheckedChange = { ed.keep(c.i, it) })
@@ -667,16 +663,38 @@ private fun ChopPane(ed: SamplesEditor) {
                         Icon(Icons.Filled.Delete, "delete", Modifier.size(18.dp), tint = cs.error)
                     }
                 }
+                // len: a fat ribbon — slide left to shorten, right to stretch; ‹ › mark the ways
                 Row(verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("len", style = MaterialTheme.typography.labelSmall,
                         color = cs.onSurfaceVariant)
-                    Slider(value = c.len.toFloat(),
-                        onValueChange = { ed.setChopLen(c.i, it.toInt()) },
-                        valueRange = 0f..maxOf(1f, (c.full - c.start).toFloat()),
-                        modifier = Modifier.weight(1f))
-                    StepButton("‹") { ed.setChopLen(c.i, c.len - step(10.0)) }
-                    StepButton("›") { ed.setChopLen(c.i, c.len + step(10.0)) }
+                    val span = (c.full - c.start).toFloat()
+                    Box(Modifier.weight(1f).height(40.dp).clip(RoundedCornerShape(8.dp))
+                        .background(cs.surfaceVariant)
+                        .pointerInput(c.i, c.start, c.full) {
+                            fun put(px: Float) {
+                                val n = span.toInt().coerceAtLeast(1)
+                                ed.setChopLen(c.i, (px / size.width * span).toInt().coerceIn(1, n))
+                            }
+                            detectDragGestures(
+                                onDragStart = { o -> put(o.x) },
+                                onDrag = { ch, _ -> put(ch.position.x); ch.consume() },
+                            )
+                        }) {
+                        Box(Modifier.align(Alignment.CenterStart).fillMaxHeight()
+                            .fillMaxWidth((c.len / span).coerceIn(0f, 1f))
+                            .background(cs.primary.copy(alpha = 0.45f)))
+                        Text("‹", Modifier.align(Alignment.CenterStart).padding(start = 10.dp),
+                            color = cs.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelMedium)
+                        Text("${secs(c.len)} / ${secs(c.full - c.start)}",
+                            Modifier.align(Alignment.Center),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = SloopFontFamily, color = cs.onSurface)
+                        Text("›", Modifier.align(Alignment.CenterEnd).padding(end = 10.dp),
+                            color = cs.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelMedium)
+                    }
                     TextButton(onClick = { ed.setChopLen(c.i, 0) },
                         enabled = c.end < c.full) { Text("Full") }
                 }

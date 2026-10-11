@@ -11,8 +11,8 @@ android {
         applicationId 'com.sloop.go'
         minSdk 24            // android.media.midi (MidiManager) is API 23; 24 for androidx baseline
         targetSdk 34
-        versionCode 30
-        versionName '1.7.4'
+        versionCode 31
+        versionName '1.7.5'
     }
 
     buildFeatures {

@@ -54,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -89,6 +90,7 @@ import androidx.core.content.res.ResourcesCompat
 import com.sloop.go.R
 import com.sloop.go.device.DeviceState
 import com.sloop.go.device.Link
+import com.sloop.go.device.LiveNotes
 import com.sloop.go.device.PNote
 import com.sloop.go.device.decodeNotes
 import com.sloop.go.device.noteKey
@@ -102,6 +104,7 @@ import com.sloop.go.proto.DrumStep
 import com.sloop.go.proto.Step
 import com.sloop.go.proto.StepTime
 import com.sloop.go.store.ClipKind
+import com.sloop.go.store.Smf
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -594,6 +597,8 @@ private fun DrumGrid(
     vp.d = d; vp.lw = 64f * d; vp.hdr = 26f * d; vp.cols = length; vp.rows = DRUM_LANES.size; vp.selectMode = selectMode; vp.lockV = true
     val painter = rememberPainter()
     val cs = MaterialTheme.colorScheme
+    val liveNotes = vm.controller.live.collectAsState()   // read in the draw pass only: a key repaints, nothing recomposes
+    val liveCh = LiveNotes.channelOf(state)
     var gdrag by remember(state.selectedTrack, selectMode) { mutableStateOf<GroupDrag?>(null) }
     var marquee by remember(state.selectedTrack, selectMode) { mutableStateOf<Marquee?>(null) }
     var laneDrag by remember(state.selectedTrack) { mutableStateOf<LaneDrag?>(null) }
@@ -785,10 +790,17 @@ private fun DrumGrid(
         }
         clipRect(0f, hdr, lw, size.height) {
             drawRect(cs.surface, Offset(0f, hdr), Size(lw, size.height - hdr))
+            val lv = liveNotes.value
             with(painter) {
-                for (r in r0..r1) text(DRUM_LANES[r], 6f * d, hdr + r * rh - sy + rh / 2,
-                    if (laneDrag?.let { r == it.from || r == it.to } == true) cs.tertiary else cs.onSurface,
-                    10f * d, Paint.Align.LEFT)
+                for (r in r0..r1) {
+                    val lit = lv.has(liveCh, Smf.LANE_NOTE[r])
+                    if (lit) drawRoundRect(cs.primary, Offset(2f * d, hdr + r * rh - sy + 1f * d),
+                        Size(lw - 4f * d, rh - 2f * d), CornerRadius(4f * d))
+                    text(DRUM_LANES[r], 6f * d, hdr + r * rh - sy + rh / 2,
+                        if (lit) cs.onPrimary
+                        else if (laneDrag?.let { r == it.from || r == it.to } == true) cs.tertiary else cs.onSurface,
+                        10f * d, Paint.Align.LEFT)
+                }
             }
         }
         drawRect(cs.surface, Offset.Zero, Size(lw, hdr))
@@ -863,6 +875,8 @@ private fun PianoRoll(
     vp.d = d; vp.lw = 44f * d; vp.hdr = 26f * d; vp.cols = length; vp.rows = rows
     val painter = rememberPainter()
     val cs = MaterialTheme.colorScheme
+    val liveNotes = vm.controller.live.collectAsState()   // read in the draw pass only: a key repaints, nothing recomposes
+    val liveCh = LiveNotes.channelOf(state)
     var ndrag by remember(state.selectedTrack) { mutableStateOf<NoteDrag?>(null) }
     var lastLen by remember(state.selectedTrack) { mutableIntStateOf(1) }
     var gdrag by remember(state.selectedTrack, selectMode) { mutableStateOf<GroupDrag?>(null) }
@@ -1205,11 +1219,16 @@ private fun PianoRoll(
         }
         clipRect(0f, hdr, lw, size.height) {
             drawRect(cs.surface, Offset(0f, hdr), Size(lw, size.height - hdr))
+            val lv = liveNotes.value
             with(painter) {
                 for (r in r0..r1) {
                     val note = TOP_NOTE - r
+                    val lit = lv.has(liveCh, note)
+                    if (lit) drawRoundRect(cs.primary, Offset(2f * d, rowY(r) + 1f * d),
+                        Size(lw - 4f * d, rh - 2f * d), CornerRadius(4f * d))
                     text(noteName(note), 5f * d, rowY(r) + rh / 2,
-                        if (note % 12 in BLACK_KEYS) cs.onSurfaceVariant else cs.onSurface, 10f * d, Paint.Align.LEFT)
+                        if (lit) cs.onPrimary else if (note % 12 in BLACK_KEYS) cs.onSurfaceVariant else cs.onSurface,
+                        10f * d, Paint.Align.LEFT)
                 }
             }
         }
@@ -1225,9 +1244,10 @@ private fun NoteDrag.copy(
 
 // ---------------------------------------------------------------- step editor ---
 
-/** p_lockable (firmware seq.c): the sound parameters only — not the sequencer's, arp's, key's or voice mode's. */
-private fun isLockableParam(id: Int) = id <= 16 || id == 32 || id in 33..36 || id == 38 || id == 39 ||
-    id == 44 || id in 45..48 || id == 50 || id in 53..60
+/** p_lockable (firmware seq.c): the sound parameters only — not the sequencer's, arp's, key's or voice mode's.
+ *  The engine's eight follow [pe0]; from SLOOP 2.6 (pe0 63) the INSERT's A B C and MIX (54..57) lock too. */
+private fun isLockableParam(id: Int, pe0: Int) = id <= 16 || id == 32 || id in 33..36 || id == 38 || id == 39 ||
+    id == 44 || id in 45..48 || id == 50 || (pe0 >= 63 && id in 54..57) || id in pe0..pe0 + 7
 
 @Composable
 private fun StepEditor(
@@ -1319,7 +1339,7 @@ private fun StepEditor(
                         }
                         DropdownMenu(expanded = lockMenu, onDismissRequest = { lockMenu = false }) {
                             state.pdesc.forEachIndexed { id, d ->
-                                if (d != null && isLockableParam(id)) DropdownMenuItem(
+                                if (d != null && isLockableParam(id, state.info?.pe0 ?: 53)) DropdownMenuItem(
                                     text = { Text(d.label) },
                                     onClick = { lockParam = id; lockValue = d.def; lockMenu = false })
                             }
