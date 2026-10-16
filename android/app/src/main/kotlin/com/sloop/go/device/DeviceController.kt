@@ -117,7 +117,7 @@ class DeviceController(context: Context) {
     private val liveOps = Channel<Req>(Channel.UNLIMITED)
     private val liveMasterQ = Channel<Int>(Channel.CONFLATED)
     private val holdOps = Channel<suspend () -> Unit>(Channel.UNLIMITED)
-    private val held = HashMap<Pair<Int, Int>, Int>()
+    private val held = HashMap<Triple<Int, Int, Int>, Int>()
 
     init {
         scope.launch { editWorker() }
@@ -138,19 +138,23 @@ class DeviceController(context: Context) {
 
     // ---- hold-to-max sends (LIVE page): while held a track's send goes to its maximum, on release it returns to what it was ----
 
-    fun holdParam(track: Int, id: Int, down: Boolean) {
+    /** A track parameter, or with [global] a global one (the drums' sends), held at its maximum. */
+    fun holdParam(track: Int, id: Int, down: Boolean, global: Boolean = false) {
         holdOps.trySend {
-            val key = track to id
+            val scope = if (global) 1 else 0
+            val key = Triple(scope, track, id)
             val info = _state.value.info
             if ((info?.proto ?: 0) < 4) return@trySend
             val value = if (down) {
                 if (key in held) return@trySend
-                held[key] = Parse.trackParam(request(Requests.trackParamGet(track, id), quiet = true)).value
-                _state.value.pdesc.getOrNull(id)?.max ?: 127
+                held[key] = if (global) Parse.param(request(Requests.get(1, id), quiet = true)).value
+                    else Parse.trackParam(request(Requests.trackParamGet(track, id), quiet = true)).value
+                (if (global) _state.value.gdesc else _state.value.pdesc).getOrNull(id)?.max ?: 127
             } else held.remove(key) ?: return@trySend
-            val v = Parse.trackParam(request(Requests.trackParamSet(track, id, value), quiet = true)).value
-            synchronized(pendingLock) { lastParamSent[paramKey(0, id, track)] = v }
-            _state.update { s -> if (s.selectedTrack == track) s.withParam(0, id, v) else s }
+            val v = if (global) Parse.param(request(Requests.set(1, id, value), quiet = true)).value
+                else Parse.trackParam(request(Requests.trackParamSet(track, id, value), quiet = true)).value
+            synchronized(pendingLock) { lastParamSent[paramKey(scope, id, track)] = v }
+            _state.update { s -> if (global || s.selectedTrack == track) s.withParam(scope, id, v) else s }
         }
     }
 
