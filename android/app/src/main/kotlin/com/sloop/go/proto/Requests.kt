@@ -14,6 +14,11 @@ private fun ia(vararg xs: Int) = xs
 /** Request builders, mirroring editor.html `req`. */
 object Requests {
     fun info() = Req(Cmd.INFO, IntArray(0))
+
+    /** v12 LIVE: an op and its arguments (the firmware reads nothing shorter than 2 bytes); the reply is the live state. */
+    fun live(op: Int, vararg args: Int) = Req(Cmd.LIVE, (intArrayOf(op) + args).let { if (it.size < 2) it + 0 else it })
+    fun livePlay(play: Boolean) = live(1, if (play) 1 else 0)
+    fun liveDrumSound(lane: Int, tune: Int, decay: Int) = live(12, lane and 15, (tune + 8).coerceIn(0, 15), (decay + 4).coerceIn(0, 7))
     fun get(scope: Int, id: Int) = Req(Cmd.GET, ia(scope, id))
     fun set(scope: Int, id: Int, v: Int) = Req(Cmd.SET, intArrayOf(scope, id) + v14enc(v))
     fun dump() = Req(Cmd.DUMP, IntArray(0))
@@ -135,6 +140,7 @@ fun replyMatches(cmd: Int, args: IntArray, a: IntArray): Boolean = when (cmd) {
     Cmd.PROJECT -> a.getOrNull(0) == args.getOrNull(0) && a.getOrNull(1) == args.getOrNull(1)
     Cmd.UP_LIST, Cmd.UP_GET, Cmd.UP_PUT, Cmd.UP_STORE, Cmd.UP_LOAD, Cmd.UP_ERASE,
     Cmd.TRACK_MIX, Cmd.TRACK_DUMP, Cmd.DRUM_STEP -> a.getOrNull(0) == args.getOrNull(0)
+    Cmd.LIVE -> a.getOrNull(0) == args.getOrNull(0)
     Cmd.WATCH -> ((a.getOrNull(0) ?: -1) and 1) == ((args.getOrNull(0) ?: -2) and 1)
     Cmd.TRACK_STEP, Cmd.TRACK_PARAM,
     Cmd.MICRO_SET, Cmd.FILL_SET -> a.getOrNull(0) == args.getOrNull(0) && a.getOrNull(1) == args.getOrNull(1)

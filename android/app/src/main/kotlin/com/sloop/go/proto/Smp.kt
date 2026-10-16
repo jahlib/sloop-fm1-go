@@ -33,7 +33,19 @@ object Smp {
     class SlotError(message: String) : Exception(message)
 
     /** A file/recording staged for a slot: mono samples at RATE, its root key, optional fixed range. */
-    class ZoneIn(val name: String, val s: ShortArray, var root: Int, val lo: Int? = null, val hi: Int? = null)
+    /** [loop]: 0 one shot, 1 the whole file while the key is held, 2 the start, then [ls, le] (fractions of the file) while held and the tail on release (SLOOP 2.7). */
+    class ZoneIn(val name: String, val s: ShortArray, var root: Int, val lo: Int? = null, val hi: Int? = null,
+                 val loop: Int = 0, val ls: Float = 0f, val le: Float = 1f)
+
+    const val LOOP_MIN = 64
+
+    /** The loop's [start, end] sample indices of a zone (the whole file unless LOOP+TAIL). */
+    fun loopRange(z: ZoneIn): IntArray {
+        val n = z.s.size
+        if (z.loop != 2 || n < 2 * LOOP_MIN) return intArrayOf(0, n - 1)
+        val a = (z.ls * n).toInt().coerceIn(0, n - LOOP_MIN - 1)
+        return intArrayOf(a, (z.le * n).toInt().coerceIn(a + LOOP_MIN - 1, n - 1))
+    }
 
     // ---------------------------------------------------------------- pack7 ---
 
@@ -213,14 +225,15 @@ object Smp {
     fun buildSlot(name: String, zonesIn: List<ZoneIn>): Pair<ByteArray, ByteArray> {
         class Z(
             val off: Int, val n: Int, val root: Int, var lo: Int?, var hi: Int?,
-            val pred: Int, val idx: Int,
+            val pred: Int, val idx: Int, val ls: Int, val le: Int, val looped: Int,
         )
         val zones = ArrayList<Z>()
         val parts = ArrayList<ByteArray>()
         var len = 0
         for (z in zonesIn) {
-            val e = imaEncode(z.s, 0)
-            zones.add(Z(len, z.s.size, z.root, z.lo, z.hi, e.second[0], e.second[1]))
+            val r = loopRange(z)
+            val e = imaEncode(z.s, r[0])
+            zones.add(Z(len, z.s.size, z.root, z.lo, z.hi, e.second[0], e.second[1], r[0], r[1], if (z.loop != 0) 2 else 0))
             parts.add(e.first)
             len += e.first.size
         }
@@ -249,10 +262,10 @@ object Smp {
         hdr.putLong(0)                          // rsv2[2]
         val rate = pyRound(RATE / 44100.0 * 65536)
         for (z in zones) {
-            hdr.putInt(z.off); hdr.putInt(z.n); hdr.putInt(0); hdr.putInt(z.n - 1); hdr.putInt(rate)
+            hdr.putInt(z.off); hdr.putInt(z.n); hdr.putInt(z.ls); hdr.putInt(z.le); hdr.putInt(rate)
             hdr.putShort((z.root * 16).toShort())
             hdr.putShort(z.pred.toShort())
-            hdr.put(z.idx.toByte()); hdr.put(z.lo!!.toByte()); hdr.put(z.hi!!.toByte()); hdr.put(0)
+            hdr.put(z.idx.toByte()); hdr.put(z.lo!!.toByte()); hdr.put(z.hi!!.toByte()); hdr.put(z.looped.toByte())
         }
         return hdr.array() to data
     }
@@ -411,7 +424,7 @@ object Smp {
 
     /* chops -> slot zones (one gain for all: their levels are kept). mode 0: one key each from key0;
        mode 1: the chop sel alone over the whole keyboard */
-    fun chopZones(x: DoubleArray, chops: List<Chop>, key0: Int, mode: Int = 0, sel: Int = 0): List<ZoneIn> {
+    fun chopZones(x: DoubleArray, chops: List<Chop>, key0: Int, mode: Int = 0, sel: Int = 0, loop: Int = 0): List<ZoneIn> {
         val use = chopPick(chops, mode, sel)
         var pk = 1e-9
         for (c in use) for (i in c.start until c.end) pk = max(pk, abs(x[i]))
@@ -429,7 +442,7 @@ object Smp {
             val key = min(127, key0 + (if (mode == 1) 0 else j))
             val num = if (c.i >= 0) c.i else if (mode == 1) sel else j
             ZoneIn("CHOP${(num + 1).toString().padStart(2, '0')}_${noteName(key)}.wav", s,
-                key, if (mode == 1) 0 else key, if (mode == 1) 127 else key)
+                key, if (mode == 1) 0 else key, if (mode == 1) 127 else key, loop)
         }
     }
 

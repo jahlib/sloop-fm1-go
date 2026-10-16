@@ -109,7 +109,7 @@ import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
-private val DRUM_LANES = listOf(
+val DRUM_LANES = listOf(
     "KICK", "KICK 2", "SNARE", "CLAP", "HAT", "OPEN HAT", "PEDAL", "RIM",
     "SNARE 2", "LOW TOM", "HI TOM", "CRASH", "RIDE", "SHAKER", "CONGA", "COWBELL",
 )
@@ -598,6 +598,7 @@ private fun DrumGrid(
     val painter = rememberPainter()
     val cs = MaterialTheme.colorScheme
     val liveNotes = vm.controller.live.collectAsState()   // read in the draw pass only: a key repaints, nothing recomposes
+    val transport = vm.controller.transport.collectAsState()   // the playhead, same
     val liveCh = LiveNotes.channelOf(state)
     var gdrag by remember(state.selectedTrack, selectMode) { mutableStateOf<GroupDrag?>(null) }
     var marquee by remember(state.selectedTrack, selectMode) { mutableStateOf<Marquee?>(null) }
@@ -771,6 +772,9 @@ private fun DrumGrid(
                 drawRect(cs.tertiary.copy(alpha = 0.15f), Offset(left, top), sz)
                 drawRect(cs.tertiary, Offset(left, top), sz, style = Stroke(1.5f * d))
             }
+            playhead(transport.value, state.selectedTrack, c0, c1)?.let { ph ->
+                drawRect(cs.primary.copy(alpha = 0.2f), Offset(lw + ph * cw - sx, hdr), Size(cw, size.height - hdr))
+            }
             laneDrag?.let { ld ->                         // the picked lane lit up, its hits ghosted onto the target lane
                 drawRect(cs.tertiary.copy(alpha = 0.18f), Offset(lw, hdr + ld.from * rh - sy), Size(size.width - lw, rh))
                 if (ld.to != ld.from) {
@@ -806,6 +810,10 @@ private fun DrumGrid(
         drawRect(cs.surface, Offset.Zero, Size(lw, hdr))
     }
 }
+
+/** The step the selected track is on while the FM-1 plays (SLOOP 2.7 LIVE), if it is among the visible columns. */
+private fun playhead(lv: com.sloop.go.proto.Live?, track: Int, c0: Int, c1: Int): Int? =
+    lv?.takeIf { it.playing }?.step?.getOrNull(track)?.takeIf { it in c0..c1 }
 
 private fun toggleDrum(vm: SloopViewModel, step: Int, lane: Int) {
     val cur = vm.controller.state.value.drumSteps.getOrNull(step) ?: DrumStep(step, 0, IntArray(16), IntArray(16))
@@ -876,6 +884,7 @@ private fun PianoRoll(
     val painter = rememberPainter()
     val cs = MaterialTheme.colorScheme
     val liveNotes = vm.controller.live.collectAsState()   // read in the draw pass only: a key repaints, nothing recomposes
+    val transport = vm.controller.transport.collectAsState()   // the playhead, same
     val liveCh = LiveNotes.channelOf(state)
     var ndrag by remember(state.selectedTrack) { mutableStateOf<NoteDrag?>(null) }
     var lastLen by remember(state.selectedTrack) { mutableIntStateOf(1) }
@@ -1179,6 +1188,9 @@ private fun PianoRoll(
                         Offset(colX(ns) + 1.5f * d, rowY(TOP_NOTE - n.pitch) + 2f * d),
                         Size(nl * cw - 3f * d, rh - 4f * d), radius, style = Stroke(1.5f * d))
                 }
+            }
+            playhead(transport.value, state.selectedTrack, c0, c1)?.let { ph ->
+                drawRect(cs.primary.copy(alpha = 0.2f), Offset(colX(ph), hdr), Size(cw, size.height - hdr))
             }
             carry?.let { c ->                            // a saved pattern carried over the roll, where it would land
                 val sh = carryShift(c) ?: return@let

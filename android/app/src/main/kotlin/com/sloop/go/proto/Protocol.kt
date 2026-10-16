@@ -69,6 +69,7 @@ object Cmd {
     const val DSYN_PUT = 74
     const val DSYN_STORE = 75
     const val DSYN_PLAY = 76
+    const val LIVE = 77          // v12 (SLOOP 2.7): the LIVE page's op + the live state (editor_live.c)
 
     /** Frames the device sends on its own while WATCH is on; never replies. */
     val PUSH = setOf(CHANGED, RELOAD, STEP_CHANGED, TRACK_CHANGED)

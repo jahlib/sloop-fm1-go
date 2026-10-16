@@ -4,6 +4,8 @@
 package com.sloop.go.ui
 
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,12 +35,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -55,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import com.sloop.go.device.DeviceState
 import com.sloop.go.device.Link
 import com.sloop.go.proto.Desc
+import com.sloop.go.proto.Fmt
 
 /**
  * A page inside a group: a title, a scope (0 = P_*, 1 = G_*) and the parameter ids it shows.
@@ -129,7 +134,8 @@ private fun layout(pe0: Int): List<Group> = listOf(
     Group("Drums", listOf(Page("DRUMS", 1, listOf(24, 25, 26, G_DRDLY)))),
 ) + (if (pe0 >= PE0_26) listOf(
         // GLO > MIDI: each track's channel (the drums' CH4 is G_DRCH, 24), OTHER and BEND; IN / OUT are the FM-1's own
-        Group("MIDI", listOf(Page("MIDI", 1, listOf(33, 34, 35, 24)), Page("MIDI 2", 1, listOf(36, 44)))),
+        Group("MIDI", listOf(Page("MIDI", 1, listOf(33, 34, 35, 24)), Page("MIDI 2", 1, listOf(36, 44)),
+            Page("MIDI 3", 1, listOf(45, 46, 47, 48)))),
         Group("Texture", listOf(Page("TEXTURE", 1, listOf(37, 38, 39, 40)), Page("TEXTURE 2", 1, listOf(41, 42, 43)))),
     ) else emptyList())
 
@@ -340,6 +346,41 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                         }
                     }
                 }
+            }
+        }
+        if (state.isDrum && info.proto >= 12) item(key = "drum-sound", span = StaggeredGridItemSpan.FullLine) {
+            DrumSoundCard(vm)
+        }
+    }
+}
+
+/** SLOOP 2.7: every drum sound's TUNE and DECAY (the DRUMS screen's SOUND page), through LIVE op 12. */
+@Composable
+private fun DrumSoundCard(vm: SloopViewModel) {
+    val lv by vm.controller.transport.collectAsState()
+    var lane by remember { mutableIntStateOf(0) }
+    val tune = lv?.drumTune?.getOrNull(lane) ?: 0
+    val decay = lv?.drumDecay?.getOrNull(lane) ?: 0
+    val tuneDesc = remember { Desc(0, 900, Fmt.SEMI, -8, 7, 0, "TUNE", "", emptyList()) }
+    val decDesc = remember { Desc(0, 901, Fmt.INT, -4, 3, 0, "DECAY", "", emptyList()) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(vertical = 4.dp)) {
+            Text("DRUM SOUND", Modifier.padding(start = 14.dp, top = 6.dp, bottom = 2.dp),
+                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                DRUM_LANES.forEachIndexed { i, n ->
+                    FilterChip(selected = i == lane, onClick = { lane = i }, label = { Text(n) })
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                Box(Modifier.weight(1f)) {
+                    ParamControl(tuneDesc, tune) { v -> vm.controller.setDrumSound(lane, v, decay) }
+                }
+                Box(Modifier.weight(1f)) {
+                    ParamControl(decDesc, decay) { v -> vm.controller.setDrumSound(lane, tune, v) }
+                }
+                Box(Modifier.weight(2f))
             }
         }
     }

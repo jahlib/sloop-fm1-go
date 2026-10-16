@@ -42,6 +42,7 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Equalizer
+import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.GridView
@@ -97,6 +98,7 @@ private enum class Tab(val title: String, val icon: ImageVector) {
     MIX("Mixer", Icons.Filled.Equalizer),
     PARAMS("Sound", Icons.Filled.Tune),
     SEQ("Sequencer", Icons.Filled.GridView),
+    LIVE("Live", Icons.Filled.FlashOn),
     SAMPLES("Samples", Icons.Filled.LibraryMusic),
     DRUMSYNTH("Drum synth", Icons.Filled.Album),
     FM6("FM6 patches", Icons.Filled.GraphicEq),
@@ -190,6 +192,7 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
             when (tab) {
                 Tab.PARAMS -> ParamsScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.SEQ -> SequencerScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
+                Tab.LIVE -> LiveScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.FM6 -> Fm6Screen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.SAMPLES -> SamplesScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.DRUMSYNTH -> DrumSynthScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)

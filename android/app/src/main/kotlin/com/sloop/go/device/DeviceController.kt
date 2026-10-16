@@ -18,6 +18,7 @@ import com.sloop.go.proto.Fm6
 import com.sloop.go.proto.Fm6Bank
 import com.sloop.go.proto.Fmt
 import com.sloop.go.proto.Info
+import com.sloop.go.proto.Live
 import com.sloop.go.proto.Parse
 import com.sloop.go.proto.Req
 import com.sloop.go.proto.Requests
@@ -69,6 +70,11 @@ class DeviceController(context: Context) {
     private val _live = MutableStateFlow(LiveNotes())
     val live: StateFlow<LiveNotes> = _live.asStateFlow()
 
+    /** SLOOP 2.7 (proto 12): what the FM-1 itself is doing (transport, playhead, song, drum TUNE / DECAY), polled through LIVE.
+     *  Its own flow: it changes several times a second, only the screens that draw it observe it. */
+    private val _transport = MutableStateFlow<Live?>(null)
+    val transport: StateFlow<Live?> = _transport.asStateFlow()
+
     /** Undo / redo, in RAM only: every edit is also noted here and is put back through the very same queue. */
     val history = EditHistory(onChange = { u, r -> _state.update { it.copy(canUndo = u, canRedo = r) } })
     private val historyMutex = Mutex()
@@ -105,9 +111,25 @@ class DeviceController(context: Context) {
 
     private var keepAlive: Job? = null
 
+    // ---- LIVE page ops (SLOOP 2.7): one ordered queue, so a pad's down always reaches the device before its up ----
+    private val liveOps = Channel<Req>(Channel.UNLIMITED)
+    private val liveMasterQ = Channel<Int>(Channel.CONFLATED)
+
     init {
         scope.launch { editWorker() }
+        scope.launch { for (r in liveOps) runCatching { applyLive(Parse.live(request(r, quiet = true))) } }
+        scope.launch { for (v in liveMasterQ) runCatching { applyLive(Parse.live(request(Requests.live(11, v), quiet = true))) } }
     }
+
+    /** A key of a layer on the FM-1 (6 = GLO: white keys 0..3 mute, 4..7 solo, 8 fill held, 9 fill next bar, 15 tap tempo). */
+    fun liveKey(layer: Int, key: Int, down: Boolean) { liveOps.trySend(Requests.live(2, layer, key, if (down) 1 else 0)) }
+    fun liveTap(layer: Int, key: Int) { liveKey(layer, key, true); liveKey(layer, key, false) }
+    /** A punch-in effect (0..26) while its pad is held. */
+    fun liveFx(fx: Int, on: Boolean) { liveOps.trySend(Requests.live(3, fx, if (on) 1 else 0)) }
+    /** THROW bits while held: 1 reverb, 2 echo (0: let go). */
+    fun liveThrow(bits: Int) { liveOps.trySend(Requests.live(10, bits)) }
+    /** The master level from the page, 0..126; 127 gives it back to the MASTER knob. */
+    fun liveMaster(v: Int) { liveMasterQ.trySend(v.coerceIn(0, 127)) }
 
     private fun clearDrafts(): Int = synchronized(draftLock) {
         val count = (draftSynth.keys + draftDrum.keys).size
@@ -158,6 +180,7 @@ class DeviceController(context: Context) {
         try { if (conn != null) runCatching { request(Requests.watch(0), quiet = true) } } catch (_: Exception) {}
         conn?.close(); conn = null
         _live.value = LiveNotes()
+        _transport.value = null
         val unsent = synchronized(pendingLock) {
             val count = edits.size
             edits.clear(); sending = false; queuePaused = false; editGeneration++
@@ -174,6 +197,7 @@ class DeviceController(context: Context) {
         scope.launch {
             conn?.close(); conn = null
             _live.value = LiveNotes()
+            _transport.value = null
             keepAlive?.cancel(); keepAlive = null
             val unsent = synchronized(pendingLock) {
                 val count = edits.size
@@ -325,6 +349,12 @@ class DeviceController(context: Context) {
     fun setPlaying(play: Boolean) {
         val c = conn ?: return
         scope.launch {
+            if ((_state.value.info?.proto ?: 0) >= 12) {
+                runCatching { applyLive(Parse.live(request(Requests.livePlay(play)))) }
+                    .onSuccess { _state.update { it.copy(playing = play) } }
+                    .onFailure { _state.update { it.copy(queueError = "Transport send failed") } }
+                return@launch
+            }
             runCatching {
                 if (_state.value.globalValue(G_SYNC) != 1)
                     request(Requests.set(1, G_SYNC, 1))
@@ -334,7 +364,27 @@ class DeviceController(context: Context) {
         }
     }
 
+    /** Drum lane [lane]'s TUNE (-8..7) and DECAY (-4..3) on the device (SLOOP 2.7, LIVE op 12). */
+    fun setDrumSound(lane: Int, tune: Int, decay: Int) {
+        if ((_state.value.info?.proto ?: 0) < 12) return
+        _transport.value?.let { lv ->
+            _transport.value = lv.copy(drumTune = lv.drumTune.copyOf().also { it[lane and 15] = tune },
+                drumDecay = lv.drumDecay.copyOf().also { it[lane and 15] = decay })
+        }
+        scope.launch { runCatching { applyLive(Parse.live(request(Requests.liveDrumSound(lane, tune, decay)))) } }
+    }
+
+    /** A LIVE reply: the transport button follows the device (while a PLAY / STOP is still pending, the last answer holds). */
+    private fun applyLive(lv: Live) {
+        _transport.value = lv
+        _state.update { s ->
+            val play = if (lv.playAsked) s.playing else lv.playing
+            if (s.playing == play) s else s.copy(playing = play)
+        }
+    }
+
     // ---------------------------------------------------------------- tracks ---
+
 
     fun selectTrack(track: Int) {
         if (_state.value.link != Link.READY) return
@@ -1396,6 +1446,17 @@ class DeviceController(context: Context) {
     private fun startKeepAlive() {
         keepAlive?.cancel()
         keepAlive = scope.launch {
+            launch {
+                while (true) {
+                    val lv = _state.value
+                    delay(if (lv.playing) 120 else 450)
+                    if (conn == null) break
+                    if ((lv.info?.proto ?: 0) < 12 || lv.link != Link.READY) continue
+                    val editsWaiting = synchronized(pendingLock) { edits.isNotEmpty() && !queuePaused }
+                    if (editsWaiting || linkMutex.isLocked) continue
+                    runCatching { applyLive(Parse.live(request(Requests.live(0), timeout = 300, retries = 0, quiet = true))) }
+                }
+            }
             while (true) {
                 delay(1000)
                 if (conn == null) break

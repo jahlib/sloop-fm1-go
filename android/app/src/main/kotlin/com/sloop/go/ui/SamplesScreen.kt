@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Sloop Go. Based on the SLOOP firmware (isod89) and Felucca (Leo Kuroshita);
 // see NOTICE.md.
-@file:OptIn(ExperimentalLayoutApi::class)
+@file:OptIn(ExperimentalLayoutApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 
 package com.sloop.go.ui
 
@@ -61,6 +61,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -307,7 +308,7 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, 
                             ed.progress = 0f
                             val zones = if (ed.mode == SamplesEditor.Mode.FILES) ed.files
                                 else Smp.chopZones(ed.src!!, ed.chops, ed.key0,
-                                    ed.chopMode, ed.sel.coerceAtLeast(0))
+                                    ed.chopMode, ed.sel.coerceAtLeast(0), ed.chopLoop)
                             try {
                                 ctl.smpUpload(ed.slot, ed.name, zones) { ed.progress = it }
                                 ed.say("USR${ed.slot + 1} written")
@@ -471,6 +472,9 @@ private fun FilesPane(ed: SamplesEditor) {
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodySmall)
                     NotePicker(f.root) { f.root = it }
+                    MiniPicker("", listOf("one shot" to 0, "loop" to 1, "loop+tail" to 2), f.loop) { l ->
+                        ed.files = ed.files.mapIndexed { j, z -> if (j == i) Smp.ZoneIn(z.name, z.s, z.root, z.lo, z.hi, l, z.ls, z.le) else z }
+                    }
                     val k = keys.getOrNull(i)
                     if (k != null) Text("${Smp.noteName(k[0])}–${Smp.noteName(k[1])}",
                         style = MaterialTheme.typography.labelSmall,
@@ -486,6 +490,14 @@ private fun FilesPane(ed: SamplesEditor) {
                             tint = MaterialTheme.colorScheme.error)
                     }
                 }
+                if (f.loop == 2) RangeSlider(
+                    value = f.ls..f.le,
+                    onValueChange = { r ->
+                        ed.files = ed.files.mapIndexed { j, z ->
+                            if (j == i) Smp.ZoneIn(z.name, z.s, z.root, z.lo, z.hi, 2, r.start, r.endInclusive) else z
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(28.dp))
             }
             TextButton(onClick = { ed.files = emptyList() }) { Text("Clear list") }
         }
@@ -750,6 +762,7 @@ private fun ChopPane(ed: SamplesEditor) {
             MiniPicker("key", (36..84).map { Smp.noteName(it) to it }, ed.key0) { ed.key0 = it }
             MiniPicker("", listOf("one key per chop" to 0, "selected on all keys" to 1),
                 ed.chopMode) { ed.chopMode = it }
+            MiniPicker("loop", listOf("one shot" to 0, "loop" to 1), ed.chopLoop) { ed.chopLoop = it }
             MiniPicker("max len", listOf("—" to 0f, "0.25 s" to 0.25f, "0.5 s" to 0.5f,
                 "1 s" to 1f, "2 s" to 2f), ed.maxLen) { ed.maxLen = it }
         }

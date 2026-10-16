@@ -54,6 +54,7 @@ class SamplesEditor {
     var marks by mutableStateOf<List<Smp.Mark>>(emptyList())
     var sel by mutableIntStateOf(-1)
     var key0 by mutableIntStateOf(36)
+    var chopLoop by mutableIntStateOf(0)            // 0 one shot, 1 each chop loops while its key is held (SLOOP 2.7)
     var chopMode by mutableIntStateOf(0)            // 0: one key per chop, 1: the selected chop everywhere
     var maxLen by mutableFloatStateOf(0f)           // seconds; 0 = up to the next marker
     var sens by mutableIntStateOf(5)

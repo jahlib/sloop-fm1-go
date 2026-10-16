@@ -24,7 +24,7 @@ so edits reach the FM-1 immediately.
 
 ## Install on your phone
 
-**⬇ [Download sloop_go_1.7.6.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.7.6/sloop_go_1.7.6.apk)**
+**⬇ [Download sloop_go_1.7.7.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.7.7/sloop_go_1.7.7.apk)**
 — other versions live on the [Releases](https://github.com/jahlib/sloop-fm1-go/releases) page.
 
 0. You need an **M-VAVE FM-1** device with the latest [**SLOOP** firmware](https://github.com/isod89/sloop-fm1)
@@ -53,6 +53,9 @@ from Sloop Go. The **Updates** block at the bottom of the **Device** page runs t
 - **Sound** — all sound parameters in collapsible blocks with touch knobs, engine / kit and preset pickers, track selector.
   SLOOP 2.6 adds the per-track INSERT effect, LFO 2 (SYNC / TRIG / POL), ENV SYNC (note values for ATK / DEC / REL),
   ANALOG's filter TYPE, and the global MIDI (channel per track) and TEXTURE blocks; the INSERT values can be locked on a step.
+  SLOOP 2.7 adds GLO > MIDI 3 (FX CH, DR MAP, REMOTE, CLOCK) and, on the drum track, every drum sound's TUNE and DECAY.
+- **Live** (SLOOP 2.7) — per-track mute / solo with level meters, FILL, REV / ECHO THROW, the master level and the 27
+  punch-in effects played while a pad is held; TAP tempo and the device's real play state.
 - **Sequencer** — drum grid and synth piano-roll with pinch zoom and a single icon toolbar, Live / Store (draft)
   modes, voice modes, step nudge / fill / parameter locks (SLOOP 2.4); **Select** mode in the piano roll and the drum
   grid (frame-select — or just hold empty space in the piano roll, drag the whole figure, stretch them all by one
@@ -90,7 +93,8 @@ loading a longer clip grows the pattern length to fit it). Only the notes are st
   value through the same request queue as a normal edit. The history is dropped on disconnect, and parts of it when an
   engine / preset swap makes old values meaningless. Flash writes (Store, sample upload / erase) are not undoable.
 
-Requires a phone with USB host (OTG) and a USB-C cable to the FM-1. Follows SLOOP 2.6 (editor protocol v10);
+Requires a phone with USB host (OTG) and a USB-C cable to the FM-1. Follows SLOOP 2.7 (editor protocol v12): the Play / Stop button and the sequencer's playhead follow the FM-1 itself (LIVE);
+samples can loop (LOOP, LOOP+TAIL);
 features that need newer firmware are hidden or disabled on older SLOOP.
 
 ## Build

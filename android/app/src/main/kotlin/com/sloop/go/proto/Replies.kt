@@ -104,7 +104,48 @@ data class DrumStep(
     override fun hashCode() = 31 * index + on
 }
 
+/** The LIVE reply (SLOOP 2.7, editor_live.c): the transport, the song, the mix and what each track plays now. */
+data class Live(
+    val playing: Boolean, val playAsked: Boolean, val songMode: Boolean, val songPlays: Boolean,
+    val fillNow: Boolean, val fillNext: Boolean, val songRec: Boolean,
+    val recWait: Boolean, val canUndo: Boolean, val canRedo: Boolean, val freeTake: Boolean,
+    val bpm: Int, val section: Int, val asked: Int, val chainN: Int, val chainI: Int,
+    val mutes: Int, val solos: Int, val recs: Int, val sel: Int, val punch: Int, val cpu: Int,
+    val songEntry: Int, val songEntries: Int, val songBar: Int, val songBars: Int, val stored: Int,
+    val step: IntArray, val len: IntArray, val meter: IntArray,
+    val master: Int, val throws: Int,
+    val drumTune: IntArray,    // 16 lanes, -8..7 semitones (SLOOP 2.7)
+    val drumDecay: IntArray,   // 16 lanes, -4..3
+)
+
 object Parse {
+    fun live(a: IntArray, ntrk: Int = 4): Live {
+        val r = Reader(a)
+        r.b()
+        val f = r.b(); val f2 = r.b()
+        val bpm = r.v()
+        val section = r.b() - 1; val asked = r.b(); val chainN = r.b(); val chainI = r.b()
+        val mutes = r.b(); val solos = r.b(); val recs = r.b(); val sel = r.b(); val punch = r.b() - 1; val cpu = r.b()
+        val entry = r.b(); val entries = r.b(); val bar = r.b(); val bars = r.b(); val stored = r.b()
+        val n = ntrk.coerceAtMost((a.size - r.i) / 3)
+        val step = IntArray(n); val len = IntArray(n); val meter = IntArray(n)
+        for (i in 0 until n) { step[i] = r.b(); len[i] = r.b(); meter[i] = r.b() }
+        val tail = a.size - r.i >= 18
+        val master = if (tail) r.b() else 0
+        val thr = if (tail) r.b() else 0
+        val tune = IntArray(16); val dec = IntArray(16)
+        if (tail) for (i in 0 until 16) { val x = r.b(); tune[i] = (x and 15) - 8; dec[i] = ((x shr 4) and 7) - 4 }
+        return Live(
+            playing = f and 1 != 0, playAsked = f and 2 != 0, songMode = f and 4 != 0, songPlays = f and 8 != 0,
+            fillNow = f and 16 != 0, fillNext = f and 32 != 0, songRec = f and 64 != 0,
+            recWait = f2 and 1 != 0, canUndo = f2 and 2 != 0, canRedo = f2 and 4 != 0, freeTake = f2 and 8 != 0,
+            bpm = bpm, section = section, asked = asked - 1, chainN = chainN, chainI = chainI,
+            mutes = mutes, solos = solos, recs = recs, sel = sel, punch = punch, cpu = cpu,
+            songEntry = entry, songEntries = entries, songBar = bar, songBars = bars, stored = stored,
+            step = step, len = len, meter = meter, master = master, throws = thr, drumTune = tune, drumDecay = dec,
+        )
+    }
+
     fun info(a: IntArray): Info {
         val r = Reader(a)
         val version = r.s()
