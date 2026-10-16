@@ -598,7 +598,7 @@ private fun DrumGrid(
     val painter = rememberPainter()
     val cs = MaterialTheme.colorScheme
     val liveNotes = vm.controller.live.collectAsState()   // read in the draw pass only: a key repaints, nothing recomposes
-    val transport = vm.controller.transport.collectAsState()   // the playhead, same
+    val phase = rememberPlayPhase(vm, state.selectedTrack)   // the predicted playhead, read in the draw pass only
     val liveCh = LiveNotes.channelOf(state)
     var gdrag by remember(state.selectedTrack, selectMode) { mutableStateOf<GroupDrag?>(null) }
     var marquee by remember(state.selectedTrack, selectMode) { mutableStateOf<Marquee?>(null) }
@@ -772,7 +772,7 @@ private fun DrumGrid(
                 drawRect(cs.tertiary.copy(alpha = 0.15f), Offset(left, top), sz)
                 drawRect(cs.tertiary, Offset(left, top), sz, style = Stroke(1.5f * d))
             }
-            playhead(transport.value, state.selectedTrack, c0, c1)?.let { ph ->
+            phase.value.takeIf { it >= 0f }?.toInt()?.takeIf { it in c0..c1 }?.let { ph ->
                 drawRect(cs.primary.copy(alpha = 0.2f), Offset(lw + ph * cw - sx, hdr), Size(cw, size.height - hdr))
             }
             laneDrag?.let { ld ->                         // the picked lane lit up, its hits ghosted onto the target lane
@@ -811,9 +811,19 @@ private fun DrumGrid(
     }
 }
 
-/** The step the selected track is on while the FM-1 plays (SLOOP 2.7 LIVE), if it is among the visible columns. */
-private fun playhead(lv: com.sloop.go.proto.Live?, track: Int, c0: Int, c1: Int): Int? =
-    lv?.takeIf { it.playing }?.step?.getOrNull(track)?.takeIf { it in c0..c1 }
+/** The playhead of [track] in steps (-1 stopped), advanced every frame from the controller's PlayClock while the FM-1 plays. */
+@Composable
+private fun rememberPlayPhase(vm: SloopViewModel, track: Int): androidx.compose.runtime.State<Float> {
+    val ph = remember { mutableFloatStateOf(-1f) }
+    LaunchedEffect(track) {
+        val clock = vm.controller.clock
+        while (true) {
+            if (clock.playing) androidx.compose.runtime.withFrameNanos { ph.floatValue = clock.position(track, System.nanoTime() / 1e9) }
+            else { ph.floatValue = -1f; kotlinx.coroutines.delay(150) }
+        }
+    }
+    return ph
+}
 
 private fun toggleDrum(vm: SloopViewModel, step: Int, lane: Int) {
     val cur = vm.controller.state.value.drumSteps.getOrNull(step) ?: DrumStep(step, 0, IntArray(16), IntArray(16))
@@ -884,7 +894,7 @@ private fun PianoRoll(
     val painter = rememberPainter()
     val cs = MaterialTheme.colorScheme
     val liveNotes = vm.controller.live.collectAsState()   // read in the draw pass only: a key repaints, nothing recomposes
-    val transport = vm.controller.transport.collectAsState()   // the playhead, same
+    val phase = rememberPlayPhase(vm, state.selectedTrack)   // the predicted playhead, read in the draw pass only
     val liveCh = LiveNotes.channelOf(state)
     var ndrag by remember(state.selectedTrack) { mutableStateOf<NoteDrag?>(null) }
     var lastLen by remember(state.selectedTrack) { mutableIntStateOf(1) }
@@ -1189,7 +1199,7 @@ private fun PianoRoll(
                         Size(nl * cw - 3f * d, rh - 4f * d), radius, style = Stroke(1.5f * d))
                 }
             }
-            playhead(transport.value, state.selectedTrack, c0, c1)?.let { ph ->
+            phase.value.takeIf { it >= 0f }?.toInt()?.takeIf { it in c0..c1 }?.let { ph ->
                 drawRect(cs.primary.copy(alpha = 0.2f), Offset(colX(ph), hdr), Size(cw, size.height - hdr))
             }
             carry?.let { c ->                            // a saved pattern carried over the roll, where it would land

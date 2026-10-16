@@ -73,6 +73,8 @@ class DeviceController(context: Context) {
     /** SLOOP 2.7 (proto 12): what the FM-1 itself is doing (transport, playhead, song, drum TUNE / DECAY), polled through LIVE.
      *  Its own flow: it changes several times a second, only the screens that draw it observe it. */
     private val _transport = MutableStateFlow<Live?>(null)
+    /** The playhead between answers (see [PlayClock]). */
+    val clock = PlayClock()
     val transport: StateFlow<Live?> = _transport.asStateFlow()
 
     /** Undo / redo, in RAM only: every edit is also noted here and is put back through the very same queue. */
@@ -181,6 +183,7 @@ class DeviceController(context: Context) {
         conn?.close(); conn = null
         _live.value = LiveNotes()
         _transport.value = null
+        clock.reset()
         val unsent = synchronized(pendingLock) {
             val count = edits.size
             edits.clear(); sending = false; queuePaused = false; editGeneration++
@@ -198,6 +201,7 @@ class DeviceController(context: Context) {
             conn?.close(); conn = null
             _live.value = LiveNotes()
             _transport.value = null
+            clock.reset()
             keepAlive?.cancel(); keepAlive = null
             val unsent = synchronized(pendingLock) {
                 val count = edits.size
@@ -376,6 +380,7 @@ class DeviceController(context: Context) {
 
     /** A LIVE reply: the transport button follows the device (while a PLAY / STOP is still pending, the last answer holds). */
     private fun applyLive(lv: Live) {
+        clock.feed(lv, System.nanoTime() / 1e9)
         _transport.value = lv
         _state.update { s ->
             val play = if (lv.playAsked) s.playing else lv.playing
