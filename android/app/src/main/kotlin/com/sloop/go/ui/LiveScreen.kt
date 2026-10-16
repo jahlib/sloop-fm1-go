@@ -5,6 +5,8 @@
 package com.sloop.go.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,11 +14,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -36,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.sloop.go.device.DeviceState
 import com.sloop.go.device.Link
 import com.sloop.go.proto.Live
@@ -52,105 +56,120 @@ private const val KEY_FILL = 8
 private const val KEY_FILL_BAR = 9
 private const val KEY_TAP = 15
 
-/** SLOOP 2.7 LIVE: the mix, the fills, THROWs and the 27 punch-in effects, played while a pad is held. */
+private val SENDS = listOf("DST" to 33, "CHO" to 34, "DLY" to 35, "REV" to 36)
+
+/** SLOOP 2.7 LIVE, all on one screen: a thin toolbar (play, menu, BPM, master, CPU) over the mix and the 27 punch-in pads. */
 @Composable
-fun LiveScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
+fun LiveScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, nav: @Composable () -> Unit) {
     if (state.link != Link.READY || state.info == null) { NotReady("Live", state, onDevice); return }
     val ctl = vm.controller
     val lv by ctl.transport.collectAsState()
-    LazyColumn(Modifier.fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 96.dp)) {
-        item { ScreenHeader("Live", state, NAV_INSET) }
-        if (state.info.proto < 12) item {
+    val l = lv
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(end = 10.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            nav()
+            if (state.info.proto >= 12) {
+                val cs = MaterialTheme.colorScheme
+                val master = l?.master ?: 0
+                Text("${l?.bpm ?: 0} BPM", Modifier.clickable { ctl.liveTap(LAYER_GLO, KEY_TAP) }.padding(horizontal = 4.dp, vertical = 8.dp),
+                    fontFamily = SloopFontFamily, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                Text(if (master == 0) "MST KNOB" else "MST ${master - 1}", Modifier.clickable { ctl.liveMaster(127) }.padding(vertical = 8.dp),
+                    fontFamily = SloopFontFamily, style = MaterialTheme.typography.labelSmall,
+                    color = if (master == 0) cs.onSurfaceVariant else cs.primary)
+                ThinSlider(if (master == 0) 100f / 126f else (master - 1) / 126f, master != 0,
+                    { ctl.liveMaster((it * 126f).toInt()) }, Modifier.weight(1f))
+                Text("CPU ${l?.cpu ?: 0}%", fontFamily = SloopFontFamily, style = MaterialTheme.typography.labelSmall,
+                    color = if ((l?.cpu ?: 0) > 85) cs.error else cs.onSurfaceVariant)
+            }
+        }
+        if (state.info.proto < 12) {
             Card(Modifier.fillMaxWidth().padding(8.dp)) {
-                Text("The LIVE page needs SLOOP 2.7 on the FM-1.", Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.bodyMedium)
+                Text("The LIVE page needs SLOOP 2.7 on the FM-1.", Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium)
             }
-        } else item {
-            val l = lv
-            Column(Modifier.padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatusCard(l, onTap = { ctl.liveTap(LAYER_GLO, KEY_TAP) })
-                MixCard(state, l, ctl)
-                FxCard(ctl)
-            }
+            return
+        }
+        Row(Modifier.weight(1f).padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            MixCard(state, l, ctl, Modifier.weight(1.15f).fillMaxHeight())
+            FxCard(ctl, Modifier.weight(1f).fillMaxHeight())
         }
     }
 }
 
+/** A slim 0..1 slider (the toolbar is thin); a touch or drag sets the value. */
 @Composable
-private fun StatusCard(l: Live?, onTap: () -> Unit) {
+private fun ThinSlider(value: Float, active: Boolean, onChange: (Float) -> Unit, modifier: Modifier) {
     val cs = MaterialTheme.colorScheme
-    Card(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text(if (l?.playing == true) "PLAYING" else "STOPPED", fontFamily = SloopFontFamily, fontWeight = FontWeight.SemiBold,
-                color = if (l?.playing == true) cs.primary else cs.onSurfaceVariant)
-            Text("${l?.bpm ?: 0} BPM", fontFamily = SloopFontFamily)
-            TextButton(onClick = onTap) { Text("TAP") }
-            Spacer(Modifier.weight(1f))
-            Text("CPU ${l?.cpu ?: 0}%", fontFamily = SloopFontFamily, style = MaterialTheme.typography.bodySmall,
-                color = if ((l?.cpu ?: 0) > 85) cs.error else cs.onSurfaceVariant)
+    val change by rememberUpdatedState(onChange)
+    var local by remember { mutableStateOf<Float?>(null) }
+    val v = local ?: value
+    Box(modifier.height(36.dp).pointerInput(Unit) {
+        detectTapGestures(onPress = { o ->
+            val x = (o.x / size.width).coerceIn(0f, 1f); local = x; change(x)
+            tryAwaitRelease(); local = null
+        })
+    }.pointerInput(Unit) {
+        detectHorizontalDragGestures(onDragEnd = { local = null }, onDragCancel = { local = null }) { c, _ ->
+            val x = (c.position.x / size.width).coerceIn(0f, 1f); local = x; change(x)
         }
+    }, contentAlignment = Alignment.CenterStart) {
+        Box(Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)).background(cs.surfaceVariant))
+        Box(Modifier.fillMaxWidth(v.coerceIn(0f, 1f)).height(3.dp).clip(RoundedCornerShape(2.dp))
+            .background(if (active) cs.primary else cs.outline))
     }
 }
 
 @Composable
-private fun MixCard(state: DeviceState, l: Live?, ctl: com.sloop.go.device.DeviceController) {
-    val cs = MaterialTheme.colorScheme
+private fun MixCard(state: DeviceState, l: Live?, ctl: com.sloop.go.device.DeviceController, modifier: Modifier) {
     val info = state.info!!
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("MIX", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            for (t in 0 until (l?.meter?.size ?: 0)) {
-                val e = state.tracks?.tracks?.getOrNull(t)
-                val name = if (e == null) "T${t + 1}" else
-                    "T${t + 1} " + (if (e.engine >= info.nengines) "DRUM" else info.engines.getOrNull(e.engine) ?: "")
-                val muted = ((l?.mutes ?: 0) shr t) and 1 == 1
-                val solo = ((l?.solos ?: 0) shr t) and 1 == 1
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(name, Modifier.width(92.dp), maxLines = 1, style = MaterialTheme.typography.bodySmall, fontFamily = SloopFontFamily)
-                    val m = ((l?.meter?.getOrNull(t) ?: 0) - 48).coerceAtLeast(0) / 80f
-                    Box(Modifier.weight(1f).height(10.dp).clip(RoundedCornerShape(5.dp)).background(cs.surfaceVariant)) {
-                        Box(Modifier.fillMaxWidth(m.coerceIn(0f, 1f)).height(10.dp).background(if (muted) cs.outline else cs.primary))
+    val n = (l?.meter?.size ?: 4).coerceAtLeast(1)
+    Card(modifier) {
+        Column(Modifier.fillMaxSize().padding(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                for (t in 0 until n) {
+                    val e = state.tracks?.tracks?.getOrNull(t)
+                    val eng = if (e == null) "" else if (e.engine >= info.nengines) "DRUM" else info.engines.getOrNull(e.engine) ?: ""
+                    val muted = ((l?.mutes ?: 0) shr t) and 1 == 1
+                    val solo = ((l?.solos ?: 0) shr t) and 1 == 1
+                    Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("T${t + 1}", fontFamily = SloopFontFamily, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                        Text(eng, maxLines = 1, fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        for ((name, id) in SENDS)
+                            Pad(name, false, Modifier.fillMaxWidth().weight(1f), small = true,
+                                down = { ctl.holdParam(t, id, true) }, up = { ctl.holdParam(t, id, false) })
+                        Pad("M", muted, Modifier.fillMaxWidth().weight(1f), tap = { ctl.liveTap(LAYER_GLO, KEY_MUTE + t) })
+                        Pad("S", solo, Modifier.fillMaxWidth().weight(1f), tap = { ctl.liveTap(LAYER_GLO, KEY_SOLO + t) })
                     }
-                    Pad("M", muted, Modifier.width(48.dp), tap = { ctl.liveTap(LAYER_GLO, KEY_MUTE + t) })
-                    Pad("S", solo, Modifier.width(48.dp), tap = { ctl.liveTap(LAYER_GLO, KEY_SOLO + t) })
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Pad("FILL", l?.fillNow == true, Modifier.weight(1f),
+            Row(Modifier.height(40.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Pad("FILL", l?.fillNow == true, Modifier.weight(1f).fillMaxHeight(), small = true,
                     down = { ctl.liveKey(LAYER_GLO, KEY_FILL, true) }, up = { ctl.liveKey(LAYER_GLO, KEY_FILL, false) })
-                Pad("FILL NEXT BAR", l?.fillNext == true, Modifier.weight(1f), tap = { ctl.liveTap(LAYER_GLO, KEY_FILL_BAR) })
-                Pad("REV THROW", ((l?.throws ?: 0) and 1) != 0, Modifier.weight(1f),
-                    down = { ctl.liveThrow(1) }, up = { ctl.liveThrow(0) })
-                Pad("ECHO THROW", ((l?.throws ?: 0) and 2) != 0, Modifier.weight(1f),
-                    down = { ctl.liveThrow(2) }, up = { ctl.liveThrow(0) })
+                Pad("NEXT BAR", l?.fillNext == true, Modifier.weight(1f).fillMaxHeight(), small = true,
+                    tap = { ctl.liveTap(LAYER_GLO, KEY_FILL_BAR) })
             }
-            val master = l?.master ?: 0
-            var local by remember { mutableStateOf<Float?>(null) }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("MASTER", Modifier.width(92.dp), style = MaterialTheme.typography.bodySmall, fontFamily = SloopFontFamily)
-                Slider(value = local ?: if (master == 0) 100f else (master - 1).toFloat(), valueRange = 0f..126f,
-                    onValueChange = { local = it; ctl.liveMaster(it.toInt()) },
-                    onValueChangeFinished = { local = null }, modifier = Modifier.weight(1f))
-                Pad(if (master == 0) "KNOB" else "${master - 1}", master == 0, Modifier.width(64.dp), tap = { ctl.liveMaster(127) })
+            Row(Modifier.height(40.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Pad("REV THR", ((l?.throws ?: 0) and 1) != 0, Modifier.weight(1f).fillMaxHeight(), small = true,
+                    down = { ctl.liveThrow(1) }, up = { ctl.liveThrow(0) })
+                Pad("ECHO THR", ((l?.throws ?: 0) and 2) != 0, Modifier.weight(1f).fillMaxHeight(), small = true,
+                    down = { ctl.liveThrow(2) }, up = { ctl.liveThrow(0) })
             }
         }
     }
 }
 
 @Composable
-private fun FxCard(ctl: com.sloop.go.device.DeviceController) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("PUNCH-IN FX · hold a pad", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            FX_NAMES.chunked(4).forEachIndexed { r, row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+private fun FxCard(ctl: com.sloop.go.device.DeviceController, modifier: Modifier) {
+    Card(modifier) {
+        Column(Modifier.fillMaxSize().padding(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            FX_NAMES.chunked(3).forEachIndexed { r, row ->
+                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     row.forEachIndexed { c, n ->
-                        val fx = r * 4 + c
-                        Pad(n, false, Modifier.weight(1f).height(52.dp),
+                        val fx = r * 3 + c
+                        Pad(n, false, Modifier.weight(1f).fillMaxHeight(), small = true,
                             down = { ctl.liveFx(fx, true) }, up = { ctl.liveFx(fx, false) })
                     }
-                    repeat(4 - row.size) { Box(Modifier.weight(1f)) }
                 }
             }
         }
@@ -161,14 +180,14 @@ private fun FxCard(ctl: com.sloop.go.device.DeviceController) {
 @Composable
 private fun Pad(
     label: String, active: Boolean, modifier: Modifier = Modifier,
-    tap: (() -> Unit)? = null, down: (() -> Unit)? = null, up: (() -> Unit)? = null,
+    tap: (() -> Unit)? = null, down: (() -> Unit)? = null, up: (() -> Unit)? = null, small: Boolean = false,
 ) {
     val cs = MaterialTheme.colorScheme
     var pressed by remember { mutableStateOf(false) }
     val onTap by rememberUpdatedState(tap)
     val onDown by rememberUpdatedState(down)
     val onUp by rememberUpdatedState(up)
-    Box(modifier.height(40.dp).clip(RoundedCornerShape(8.dp))
+    Box(modifier.clip(RoundedCornerShape(8.dp))
         .background(if (pressed || active) cs.primary else cs.surfaceVariant)
         .pointerInput(Unit) {
             detectTapGestures(onPress = {
@@ -177,7 +196,7 @@ private fun Pad(
                 try { if (tryAwaitRelease()) onTap?.invoke() } finally { pressed = false; onUp?.invoke() }
             })
         }, contentAlignment = Alignment.Center) {
-        Text(label, maxLines = 1, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold,
+        Text(label, maxLines = 1, style = MaterialTheme.typography.labelMedium, fontSize = if (small) 9.sp else 12.sp, fontWeight = FontWeight.SemiBold,
             color = if (pressed || active) cs.onPrimary else cs.onSurface)
     }
 }

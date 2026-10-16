@@ -120,6 +120,7 @@ class DeviceController(context: Context) {
     init {
         scope.launch { editWorker() }
         scope.launch { for (r in liveOps) runCatching { applyLive(Parse.live(request(r, quiet = true))) } }
+        scope.launch { for (op in holdOps) runCatching { op() } }
         scope.launch { for (v in liveMasterQ) runCatching { applyLive(Parse.live(request(Requests.live(11, v), quiet = true))) } }
     }
 
@@ -132,6 +133,26 @@ class DeviceController(context: Context) {
     fun liveThrow(bits: Int) { liveOps.trySend(Requests.live(10, bits)) }
     /** The master level from the page, 0..126; 127 gives it back to the MASTER knob. */
     fun liveMaster(v: Int) { liveMasterQ.trySend(v.coerceIn(0, 127)) }
+
+    // ---- hold-to-max sends (LIVE page): while held a track's send goes to its maximum, on release it returns to what it was ----
+    private val holdOps = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+    private val held = HashMap<Pair<Int, Int>, Int>()
+
+    fun holdParam(track: Int, id: Int, down: Boolean) {
+        holdOps.trySend {
+            val key = track to id
+            val info = _state.value.info
+            if ((info?.proto ?: 0) < 4) return@trySend
+            val value = if (down) {
+                if (key in held) return@trySend
+                held[key] = Parse.trackParam(request(Requests.trackParamGet(track, id), quiet = true)).value
+                _state.value.pdesc.getOrNull(id)?.max ?: 127
+            } else held.remove(key) ?: return@trySend
+            val v = Parse.trackParam(request(Requests.trackParamSet(track, id, value), quiet = true)).value
+            synchronized(pendingLock) { lastParamSent[paramKey(0, id, track)] = v }
+            _state.update { s -> if (s.selectedTrack == track) s.withParam(0, id, v) else s }
+        }
+    }
 
     private fun clearDrafts(): Int = synchronized(draftLock) {
         val count = (draftSynth.keys + draftDrum.keys).size

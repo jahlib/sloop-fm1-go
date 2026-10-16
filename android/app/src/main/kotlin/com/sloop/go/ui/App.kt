@@ -192,7 +192,7 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
             when (tab) {
                 Tab.PARAMS -> ParamsScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.SEQ -> SequencerScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
-                Tab.LIVE -> LiveScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
+                Tab.LIVE -> LiveScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.FM6 -> Fm6Screen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.SAMPLES -> SamplesScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.DRUMSYNTH -> DrumSynthScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
@@ -203,7 +203,7 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
             }
             // the sequencer embeds the cluster in its control row only once the device info is loaded
             val ready = state.link == Link.READY && state.info != null
-            val seqHasNav = ready && (tab == Tab.SEQ || tab == Tab.SAMPLES ||
+            val seqHasNav = ready && (tab == Tab.SEQ || tab == Tab.SAMPLES || tab == Tab.LIVE ||
                 (tab == Tab.DRUMSYNTH && (state.info?.proto ?: 0) >= 10))
             if (!seqHasNav) {
                 Surface(Modifier.align(Alignment.TopStart).padding(6.dp),
