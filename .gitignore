@@ -14,3 +14,4 @@ android/local.properties
 *.keystore
 keystore.properties
 
+original_os
