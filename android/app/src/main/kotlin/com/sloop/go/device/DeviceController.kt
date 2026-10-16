@@ -116,6 +116,8 @@ class DeviceController(context: Context) {
     // ---- LIVE page ops (SLOOP 2.7): one ordered queue, so a pad's down always reaches the device before its up ----
     private val liveOps = Channel<Req>(Channel.UNLIMITED)
     private val liveMasterQ = Channel<Int>(Channel.CONFLATED)
+    private val holdOps = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+    private val held = HashMap<Pair<Int, Int>, Int>()
 
     init {
         scope.launch { editWorker() }
@@ -135,8 +137,6 @@ class DeviceController(context: Context) {
     fun liveMaster(v: Int) { liveMasterQ.trySend(v.coerceIn(0, 127)) }
 
     // ---- hold-to-max sends (LIVE page): while held a track's send goes to its maximum, on release it returns to what it was ----
-    private val holdOps = Channel<suspend () -> Unit>(Channel.UNLIMITED)
-    private val held = HashMap<Pair<Int, Int>, Int>()
 
     fun holdParam(track: Int, id: Int, down: Boolean) {
         holdOps.trySend {
