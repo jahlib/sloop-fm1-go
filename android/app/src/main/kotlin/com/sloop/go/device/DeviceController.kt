@@ -175,7 +175,7 @@ class DeviceController(context: Context) {
             engine.requestUsbPermission(appContext)
             _live.value = LiveNotes()
             val c = engine.open(deviceId, onReceive = ::onFrame, onLost = { onLost() },
-                onNote = { ch, note, on -> _live.update { it.with(ch, note, on) } })
+                onNote = { ch, note, on -> _live.update { it.with(ch, note, on) }; onKey(ch, note, on) })
             if (c == null) {
                 _state.update { it.copy(link = Link.DISCONNECTED, status = "Could not open device") }
                 return@launch
@@ -1477,6 +1477,62 @@ class DeviceController(context: Context) {
 
     private var resyncJob: Job? = null
 
+    // ---- recorded notes released earlier than the device wrote them ----
+    // While the FM-1 records, its hold ties every note of the chord until the LAST key is up, so a note let go earlier still
+    // comes out as long as the one pressed after it. The keys' own MIDI note-offs say when each one really ended; the
+    // release is remembered with the playhead and, once the recording is over and the track re-read, the note is cut there.
+    private class KeyPress(val pos: Float)
+    private class KeyRelease(val track: Int, val pitch: Int, val start: Float, val end: Float, val at: Long)
+    private val keyLock = Any()
+    private val presses = HashMap<Int, KeyPress>()
+    private val releases = ArrayList<KeyRelease>()
+
+    private fun recording(s: DeviceState = _state.value): Boolean {
+        val lv = _transport.value ?: return false
+        return lv.playing && (lv.recs shr s.selectedTrack) and 1 == 1
+    }
+
+    private fun onKey(ch: Int, note: Int, on: Boolean) {
+        val s = _state.value
+        if (s.link != Link.READY || s.isDrum || ch != LiveNotes.channelOf(s)) return
+        val now = System.nanoTime()
+        synchronized(keyLock) {
+            if (!on) {
+                val p = presses.remove(note) ?: return
+                if (!recording(s)) return
+                val end = clock.position(s.selectedTrack, now / 1e9)
+                if (end >= 0f) releases.add(KeyRelease(s.selectedTrack, note, p.pos, end, now / 1_000_000))
+            } else if (recording(s)) {
+                val pos = clock.position(s.selectedTrack, now / 1e9)
+                if (pos >= 0f) presses[note] = KeyPress(pos)
+            }
+        }
+    }
+
+    private fun hasReleases() = synchronized(keyLock) { releases.isNotEmpty() }
+
+    /** Cuts the recorded notes at the step their keys were let go (see above); one undo entry. */
+    private fun trimRecorded() {
+        val limit = System.nanoTime() / 1_000_000 - 60_000
+        val rel = synchronized(keyLock) { val c = releases.filter { it.at >= limit }; releases.clear(); c }
+        if (rel.isEmpty()) return
+        editNotes { st, notes ->
+            val len = st.patternLength
+            fun wrap(v: Int) = ((v % len) + len) % len
+            var changed = false
+            val out = notes.map { n ->
+                val r = rel.firstOrNull { it.track == st.selectedTrack && it.pitch == n.pitch &&
+                    wrap(n.start - kotlin.math.floor(it.start).toInt()).let { d -> d <= 1 || d == len - 1 } } ?: return@map n
+                val e = kotlin.math.floor(r.end).toInt()
+                val last = if (r.end - e < 0.5f) e - 1 else e
+                val d = wrap(last - n.start)
+                val keep = if (d > len / 2) 1 else d + 1
+                if (keep < n.len) { changed = true; n.copy(len = keep) } else n
+            }
+            if (changed) out else null
+        }
+    }
+
     /**
      * Steps pushed one by one while the FM-1 records (its hold keeps moving a note's end, nudges change too) can leave a step
      * stale if a read lost a race. Once the pushes stop for a moment, the whole track is read again and the roll shows what the
@@ -1491,7 +1547,17 @@ class DeviceController(context: Context) {
             val dump = s.dump ?: return@launch
             if (s.link != Link.READY) return@launch
             if (synchronized(pendingLock) { edits.isNotEmpty() || sending }) { scheduleResync(); return@launch }
-            runCatching { loadSteps(info, dump); loadStepExtras(info) }
+            runCatching {
+                loadSteps(info, dump); loadStepExtras(info)
+                if (hasReleases()) {
+                    var waited = 0
+                    while (recording() && waited < 240) { delay(500); waited++ }     // not while the device still records
+                    if (!recording() && hasReleases()) {
+                        loadSteps(info, dump); loadStepExtras(info)
+                        trimRecorded()
+                    }
+                }
+            }
         }
     }
 

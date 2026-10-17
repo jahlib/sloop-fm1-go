@@ -148,6 +148,8 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     var browser by remember { mutableStateOf<BrowserMode?>(null) }
     var carry by remember { mutableStateOf<Carry?>(null) }
     val kind = if (state.drumGrid) ClipKind.DRUM else ClipKind.PIANO
+    val prefs = LocalContext.current.getSharedPreferences("sequencer", 0)
+    var chin by remember { mutableStateOf(prefs.getBoolean("chin", false)) }   // the FX strip on the right edge (T1..T3)
     val newLen = remember(state.selectedTrack) { mutableIntStateOf(1) }   // the length a tapped-in note gets, in steps
 
     // Refit once the loaded steps of another track actually arrive: a track switch replaces the
@@ -162,6 +164,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
         ControlPanel(vm, state, nav, onPick = { picker = true }, onClear = { askClear = true }, onFit = { fitTick++ },
             onSave = { browser = BrowserMode.SAVE }, onLoad = { browser = BrowserMode.LOAD },
             onOptions = { options = true }, optionsLabel = "Step ${selected + 1}", newLen = if (state.drumGrid) null else newLen,
+            chin = chin, onChin = { chin = it; prefs.edit().putBoolean("chin", it).apply() },
             selectMode = selectMode, onSelectMode = { selectMode = it }, selCount = noteSel.size,
             onTranspose = { d ->
                 if (selectMode && noteSel.isNotEmpty()) {
@@ -180,8 +183,11 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
             })
         if (state.drumGrid) DrumGrid(vm, state, fitTick, selectMode, { selectMode = it }, noteSel, { noteSel = it },
             selected, { sel = it }, Modifier.weight(1f).fillMaxWidth())
-        else PianoRoll(vm, state, fitTick, selected, { sel = it }, selectMode, noteSel, { noteSel = it },
-            carry, { carry = null; browser = null }, newLen, Modifier.weight(1f).fillMaxWidth())
+        else Row(Modifier.weight(1f).fillMaxWidth()) {
+            PianoRoll(vm, state, fitTick, selected, { sel = it }, selectMode, noteSel, { noteSel = it },
+                carry, { carry = null; browser = null }, newLen, Modifier.weight(1f).fillMaxHeight())
+            if (chin) FxChin(vm, state)
+        }
     }
     browser?.let { mode ->
         ClipBrowserOverlay(vm, kind, mode, carrying = carry != null,
@@ -220,7 +226,7 @@ private fun ControlPanel(
     vm: SloopViewModel, state: DeviceState, nav: @Composable () -> Unit, onPick: () -> Unit,
     onSave: () -> Unit, onLoad: () -> Unit,
     onClear: () -> Unit, onFit: () -> Unit, onOptions: (() -> Unit)?, optionsLabel: String,
-    newLen: androidx.compose.runtime.MutableIntState?,
+    newLen: androidx.compose.runtime.MutableIntState?, chin: Boolean, onChin: (Boolean) -> Unit,
     selectMode: Boolean, onSelectMode: (Boolean) -> Unit, selCount: Int, onDeleteSel: () -> Unit,
     onTranspose: (Int) -> Unit,
 ) {
@@ -280,7 +286,12 @@ private fun ControlPanel(
         IconButton(onClick = onDeleteSel, enabled = selCount > 0, modifier = Modifier.size(32.dp)) {
             Icon(Icons.Filled.Delete, contentDescription = "Delete selected", modifier = Modifier.size(20.dp))
         }
-        if (newLen != null) NewLengthSelect(state, newLen)
+        if (newLen != null) {
+            NewLengthSelect(state, newLen)
+            FilledTonalIconToggleButton(checked = chin, onCheckedChange = onChin, modifier = Modifier.size(32.dp)) {
+                Text("FX", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+        }
         sep()
         mini(Icons.Filled.Save, "Save pattern", onSave)
         mini(Icons.Filled.FolderOpen, "Load pattern", onLoad)

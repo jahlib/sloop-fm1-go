@@ -238,7 +238,7 @@ private fun FxCard(ctl: com.sloop.go.device.DeviceController, modifier: Modifier
 
 /** A pad: [tap] on a short press, or [down] / [up] for as long as it is held (the up also fires when the finger slides off or the page closes). */
 @Composable
-private fun Pad(
+internal fun Pad(
     label: String, active: Boolean, modifier: Modifier = Modifier,
     tap: (() -> Unit)? = null, down: (() -> Unit)? = null, up: (() -> Unit)? = null, small: Boolean = false,
     accent: androidx.compose.ui.graphics.Color? = null,
