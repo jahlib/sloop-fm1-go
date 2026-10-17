@@ -24,7 +24,7 @@ so edits reach the FM-1 immediately.
 
 ## Install on your phone
 
-**⬇ [Download sloop_go_1.7.11.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.7.11/sloop_go_1.7.11.apk)**
+**⬇ [Download sloop_go_1.7.12.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.7.12/sloop_go_1.7.12.apk)**
 — other versions live on the [Releases](https://github.com/jahlib/sloop-fm1-go/releases) page.
 
 0. You need an **M-VAVE FM-1** device with the latest [**SLOOP** firmware](https://github.com/isod89/sloop-fm1)

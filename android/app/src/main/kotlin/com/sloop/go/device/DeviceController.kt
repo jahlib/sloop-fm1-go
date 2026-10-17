@@ -1040,6 +1040,11 @@ class DeviceController(context: Context) {
         }
     }
 
+    /** One undo entry for a drum step changed live with record = false (a level dragged on the grid). */
+    fun recordDrumEdit(index: Int, was: DrumStep, now: DrumStep) {
+        if (was != now) history.record(Change.Drum(_state.value.selectedTrack, index, was.snapshot(), now.snapshot()))
+    }
+
     /** Fills the empty drum [lane] with a hit on every [every]th step (1 = all), from the first step. */
     fun fillDrumLane(lane: Int, every: Int) = history.transaction {
         val s = _state.value

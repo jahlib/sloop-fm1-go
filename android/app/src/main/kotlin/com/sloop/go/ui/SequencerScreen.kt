@@ -608,6 +608,11 @@ private fun DrumGrid(
     var gdrag by remember(state.selectedTrack, selectMode) { mutableStateOf<GroupDrag?>(null) }
     var marquee by remember(state.selectedTrack, selectMode) { mutableStateOf<Marquee?>(null) }
     var laneDrag by remember(state.selectedTrack) { mutableStateOf<LaneDrag?>(null) }
+    var vel by remember(state.selectedTrack) { mutableStateOf<VelDrag?>(null) }       // a held hit: drag up / down for its level
+    val pulse = remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(vel != null) {
+        while (vel != null) androidx.compose.runtime.withFrameNanos { pulse.floatValue = (it / 1_000_000 % 900) / 900f }
+    }
     var fillLane by remember(state.selectedTrack) { mutableStateOf<Int?>(null) }   // an empty lane held: the quick-fill menu
     val onSelNow by rememberUpdatedState(onCellSel)
     val live = remember { object { var v: Set<Int> = cellSel } }   // the selection as the gesture sees it
@@ -674,6 +679,13 @@ private fun DrumGrid(
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     return true
                 }
+                cell(p)?.takeIf { isOn(it.first, it.second) }?.let { (s, l) ->   // hold a hit: its level follows the finger up / down
+                    val cur = vm.controller.state.value.drumSteps.getOrNull(s) ?: return false
+                    val r = DRUM_LV_ORDER.indexOf(cur.lvl[l]).coerceAtLeast(0)
+                    vel = VelDrag(s, l, p.y, r, r, cur.copy(lvl = cur.lvl.copyOf(), rat = cur.rat.copyOf()))
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    return true
+                }
                 val (s, l) = cell(p) ?: return false
                 paintOn = !isOn(s, l)
                 lastCell = s to l
@@ -681,6 +693,18 @@ private fun DrumGrid(
                 return true
             }
             override fun drag(p: Offset) {
+                vel?.let { v ->
+                    val rank = (v.base + kotlin.math.round((v.y0 - p.y) / (30f * d)).toInt()).coerceIn(0, 3)
+                    if (rank != v.rank) {
+                        vel = v.copy(rank = rank)
+                        vm.controller.state.value.drumSteps.getOrNull(v.step)?.let { cur ->
+                            val lv = cur.lvl.copyOf().also { it[v.lane] = DRUM_LV_ORDER[rank] }
+                            vm.controller.setDrumStep(v.step, cur.copy(lvl = lv), record = false)
+                        }
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    }
+                    return
+                }
                 laneDrag?.let { ld ->
                     val to = vp.rowAt(p.y).coerceIn(0, DRUM_LANES.lastIndex)
                     if (to != ld.to) { laneDrag = ld.copy(to = to); haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
@@ -698,6 +722,12 @@ private fun DrumGrid(
                 if (isOn(c.first, c.second) != paintOn) toggleDrum(vm, c.first, c.second)
             }
             override fun release(p: Offset) {
+                vel?.let { v ->
+                    drag(p)
+                    vm.controller.state.value.drumSteps.getOrNull(v.step)?.let { vm.controller.recordDrumEdit(v.step, v.was, it) }
+                    vel = null
+                    return
+                }
                 laneDrag?.let { ld ->
                     drag(p)
                     val to = laneDrag?.to ?: ld.to
@@ -732,7 +762,7 @@ private fun DrumGrid(
                 }
                 paintOn = null
             }
-            override fun cancel() { paintOn = null; gdrag = null; marquee = null; laneDrag = null; vp.nudgeOff = false }
+            override fun cancel() { paintOn = null; gdrag = null; marquee = null; laneDrag = null; vel = null; vp.nudgeOff = false }
         }
     }
 
@@ -839,6 +869,27 @@ private fun DrumGrid(
                 }
             }
         }
+        vel?.let { v ->                               // the aura of the held hit: arrows pulsing up and down, the level named
+            val cx = lw + v.step * cw - sx + cw / 2
+            val top = hdr + v.lane * rh - sy
+            val a = 0.35f + 0.65f * (1f - pulse.floatValue)
+            val gap = 8f * d + 10f * d * pulse.floatValue
+            val aw = 10f * d
+            fun chevron(up: Boolean, y: Float, on: Boolean) {
+                val k = if (up) -1f else 1f
+                val col = (if (on) cs.tertiary else cs.outline).copy(alpha = if (on) a else 0.25f)
+                val path = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(cx - aw, y); lineTo(cx, y + k * 7f * d); lineTo(cx + aw, y)
+                }
+                drawPath(path, col, style = Stroke(3f * d, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+            }
+            drawRoundRect(cs.tertiary.copy(alpha = 0.18f * a), Offset(cx - cw, top - rh), Size(2 * cw, 3 * rh), CornerRadius(cw))
+            chevron(true, top - gap, v.rank < 3)
+            chevron(false, top + rh + gap, v.rank > 0)
+            drawRoundRect(cs.tertiary, Offset(lw + v.step * cw - sx + pad, top + pad), Size(cw - 2 * pad, rh - 2 * pad), CornerRadius(5f * d),
+                style = Stroke(2f * d))
+            with(painter) { text(DRUM_LV_NAMES[v.rank], cx, top - gap - 16f * d, cs.tertiary, 11f * d, Paint.Align.CENTER) }
+        }
         drawRect(cs.surface, Offset.Zero, Size(lw, hdr))
     }
 }
@@ -878,6 +929,11 @@ private class NoteHit(val start: Int, val note: Int, val len: Int, val edge: Int
 
 /** A drum lane picked by its name, being dragged ([to]) onto another lane. */
 private data class LaneDrag(val from: Int, val to: Int)
+
+/** A held hit whose level is being dragged: [base] and [rank] index DRUM_LV_ORDER (GHOST, SOFT, NORM, HARD). */
+private data class VelDrag(val step: Int, val lane: Int, val y0: Float, val base: Int, val rank: Int, val was: DrumStep)
+private val DRUM_LV_ORDER = intArrayOf(1, 2, 0, 3)
+private val DRUM_LV_NAMES = arrayOf("GHOST", "SOFT", "NORM", "HARD")
 
 /** The selected notes being carried (or, with [copy], a clone of them), as grid cells from the grab point. */
 private class GroupDrag(val grabStep: Int, val grabRow: Int, val copy: Boolean, val dStep: Int = 0, val dPitch: Int = 0)
