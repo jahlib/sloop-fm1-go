@@ -49,8 +49,12 @@ reported and discarded on disconnect. App-process death also loses queued edits 
   step supports up to four notes. As in the original web editor, a new NOTE inside a TIE tail
   ends that tail; extending a chord stops before the next NOTE of any pitch. Adding a pitch at
   an existing NOTE keeps that chord's duration. The roll shows each stored NOTE and its following
-  TIEs; a SLOOP 2.7 CONT slot (a key held over the next recorded note) continues the same bar.
-  Shorten such a bar to before the next NOTE to drop the held pitch from that step. The TIE toolbar switch adds
+  TIEs. A SLOOP 2.7 CONT slot (a key released late over the next recorded note) is drawn as
+  released at that NOTE; the step is kept as recorded, so FM-1 may still hold the pitch longer.
+  Editing that note (length, move, delete) drops its hidden continuation, so FM-1 then plays
+  exactly the drawn NOTE + TIE length.
+  **Q** quantizes note starts (1/2 … 1/32 of a bar, by DIV) of the selection or the whole track,
+  keeping lengths. The TIE toolbar switch adds
   continuation markers; dragging previews the same chord boundaries that will be sent.
   Clear asks for confirmation; per-step accent/slide/tie options,
   length +/- controls and keyboard are in the piano-roll's step options. The sequencer shows the

@@ -905,6 +905,20 @@ class DeviceController(context: Context) {
             movePianoNotes(notes, keys, dStep, dPitch, copy, s.patternLength)
         }
 
+    /** Quantizes note starts to [grid] steps, keeping lengths: the notes named by [keys], or all notes when
+     * [keys] is empty. Returns the selection's new keys, or null if nothing was sent. */
+    fun quantizeNotes(keys: Set<Int>, grid: Double): Set<Int>? {
+        val s = _state.value
+        val notes = decodeNotes(s.steps, s.patternLength)
+        val target = keys.takeIf { it.isNotEmpty() }
+        val after = quantizePianoNotes(notes, target, grid, s.patternLength)
+        if (after == notes || !editNotes { _, _ -> after }) return null
+        val stored = decodeNotes(_state.value.steps, s.patternLength).map { noteKey(it.pitch, it.start) }.toSet()
+        return if (target == null) emptySet()
+        else notes.zip(after).filter { (n, _) -> noteKey(n.pitch, n.start) in keys }
+            .map { (_, q) -> noteKey(q.pitch, q.start) }.filter { it in stored }.toSet()
+    }
+
     /** Removes the notes named by [keys] ([noteKey]). */
     fun deleteNotes(keys: Set<Int>) {
         editNotes { _, notes -> notes.filter { noteKey(it.pitch, it.start) !in keys }.takeIf { it.size != notes.size } }

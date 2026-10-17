@@ -189,6 +189,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                     }
                 } else vm.controller.transposeNotes(d)
             },
+            onQuantize = { grid -> vm.controller.quantizeNotes(noteSel, grid)?.let { if (noteSel.isNotEmpty()) noteSel = it } },
             onDeleteSel = {
                 if (state.drumGrid) vm.controller.deleteDrumCells(noteSel) else vm.controller.deleteNotes(noteSel)
                 noteSel = emptySet()
@@ -241,7 +242,7 @@ private fun ControlPanel(
     newLen: androidx.compose.runtime.MutableIntState?, chin: Boolean, onChin: (Boolean) -> Unit,
     showTies: Boolean, onShowTies: (Boolean) -> Unit,
     selectMode: Boolean, onSelectMode: (Boolean) -> Unit, selCount: Int, onDeleteSel: () -> Unit,
-    onTranspose: (Int) -> Unit,
+    onTranspose: (Int) -> Unit, onQuantize: (Double) -> Unit,
 ) {
     var confirmSwitch by remember { mutableStateOf(false) }
     val tight = PaddingValues(horizontal = 8.dp)
@@ -301,6 +302,7 @@ private fun ControlPanel(
         }
         if (newLen != null) {
             NewLengthSelect(state, newLen)
+            QuantizeSelect(state, selCount, onQuantize)
             FilledTonalIconToggleButton(checked = showTies, onCheckedChange = onShowTies, modifier = Modifier.size(32.dp)) {
                 Text("TIE", fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
@@ -1639,6 +1641,29 @@ private fun NewLengthSelect(state: DeviceState, len: androidx.compose.runtime.Mu
                     text = { Text("$name  ·  $steps ${if (steps == 1) "step" else "steps"}",
                         color = if (steps == len.intValue) MaterialTheme.colorScheme.primary else Color.Unspecified) },
                     onClick = { len.intValue = steps; open = false })
+            }
+        }
+    }
+}
+
+/** Moves note starts to a bar fraction (in steps by DIV), keeping lengths: the selection, or the whole track. */
+@Composable
+private fun QuantizeSelect(state: DeviceState, selCount: Int, onQuantize: (Double) -> Unit) {
+    val divIdx = state.pdesc.indexOfFirst { it?.label == "DIV" }
+    val per = ROLL_DIV_PER_BAR.getOrElse(if (divIdx >= 0) state.paramValue(divIdx) else 2) { 16f }
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = true }, contentPadding = PaddingValues(horizontal = 6.dp),
+            modifier = Modifier.height(32.dp)) { Text("Q", style = MaterialTheme.typography.labelMedium) }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            Text(if (selCount > 0) "Quantize $selCount selected" else "Quantize track",
+                Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            listOf("1/2" to 2, "1/4" to 4, "1/8" to 8, "1/16" to 16, "1/32" to 32).forEach { (name, d) ->
+                val grid = per.toDouble() / d
+                DropdownMenuItem(enabled = grid >= 1.0,
+                    text = { Text(if (grid >= 1.0) "$name  ·  ${if (grid % 1.0 == 0.0) grid.toInt().toString() else "%.1f".format(grid)} st" else "$name  ·  finer than DIV") },
+                    onClick = { onQuantize(grid); open = false })
             }
         }
     }
