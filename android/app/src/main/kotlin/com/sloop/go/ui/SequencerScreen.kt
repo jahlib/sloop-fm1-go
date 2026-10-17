@@ -12,6 +12,12 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -154,7 +160,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     Column(Modifier.fillMaxSize()) {
         ControlPanel(vm, state, nav, onPick = { picker = true }, onClear = { askClear = true }, onFit = { fitTick++ },
             onSave = { browser = BrowserMode.SAVE }, onLoad = { browser = BrowserMode.LOAD },
-            onOptions = if (state.drumGrid) null else { { options = true } }, optionsLabel = "Step ${selected + 1}",
+            onOptions = { options = true }, optionsLabel = "Step ${selected + 1}",
             selectMode = selectMode, onSelectMode = { selectMode = it }, selCount = noteSel.size,
             onTranspose = { d ->
                 if (selectMode && noteSel.isNotEmpty()) {
@@ -172,7 +178,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                 noteSel = emptySet()
             })
         if (state.drumGrid) DrumGrid(vm, state, fitTick, selectMode, { selectMode = it }, noteSel, { noteSel = it },
-            Modifier.weight(1f).fillMaxWidth())
+            selected, { sel = it }, Modifier.weight(1f).fillMaxWidth())
         else PianoRoll(vm, state, fitTick, selected, { sel = it }, selectMode, noteSel, { noteSel = it },
             carry, { carry = null; browser = null }, Modifier.weight(1f).fillMaxWidth())
     }
@@ -189,15 +195,14 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     }
 
     if (picker) PresetPicker(vm, state) { picker = false }
-    if (options && !state.drumGrid) AlertDialog(
-        onDismissRequest = { options = false },
-        confirmButton = { TextButton(onClick = { options = false }) { Text("Close") } },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                StepEditor(vm, state, state.steps.getOrNull(selected), selected, state.steps, state.patternLength)
-            }
-        },
-    )
+    if (options) StepDialog(
+        title = "Step ${selected + 1}" + if (state.drumGrid) " · drums" else "",
+        onPrev = { sel = (selected - 1).coerceAtLeast(0) }, onNext = { sel = (selected + 1).coerceAtMost(state.patternLength - 1) },
+        canPrev = selected > 0, canNext = selected < state.patternLength - 1, onClose = { options = false },
+    ) {
+        if (state.drumGrid) DrumStepEditor(vm, state, selected)
+        else StepEditor(vm, state, state.steps.getOrNull(selected), selected, state.steps, state.patternLength)
+    }
     if (askClear) AlertDialog(
         onDismissRequest = { askClear = false },
         title = { Text("Clear pattern?") },
@@ -587,7 +592,7 @@ private fun rememberPainter(): Painter {
 @Composable
 private fun DrumGrid(
     vm: SloopViewModel, state: DeviceState, fitTick: Int, selectMode: Boolean, onSelectMode: (Boolean) -> Unit,
-    cellSel: Set<Int>, onCellSel: (Set<Int>) -> Unit, modifier: Modifier,
+    cellSel: Set<Int>, onCellSel: (Set<Int>) -> Unit, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier,
 ) {
     val onSelectModeNow by rememberUpdatedState(onSelectMode)
     val length = state.patternLength
@@ -603,6 +608,7 @@ private fun DrumGrid(
     var gdrag by remember(state.selectedTrack, selectMode) { mutableStateOf<GroupDrag?>(null) }
     var marquee by remember(state.selectedTrack, selectMode) { mutableStateOf<Marquee?>(null) }
     var laneDrag by remember(state.selectedTrack) { mutableStateOf<LaneDrag?>(null) }
+    var fillLane by remember(state.selectedTrack) { mutableStateOf<Int?>(null) }   // an empty lane held: the quick-fill menu
     val onSelNow by rememberUpdatedState(onCellSel)
     val live = remember { object { var v: Set<Int> = cellSel } }   // the selection as the gesture sees it
     live.v = cellSel
@@ -631,6 +637,7 @@ private fun DrumGrid(
             fun isOn(step: Int, lane: Int) =
                 ((vm.controller.state.value.drumSteps.getOrNull(step)?.on ?: 0) shr lane) and 1 == 1
             override fun tap(p: Offset) {
+                if (p.y < vp.hdr && p.x >= vp.lw) { vp.stepAt(p.x).takeIf { it in 0 until length }?.let(onSelect); return }
                 val c = cell(p)
                 if (!selectMode) { c?.let { (s, l) -> toggleDrum(vm, s, l) }; return }
                 if (c == null || !isOn(c.first, c.second)) { if (live.v.isNotEmpty()) setSel(emptySet()); return }
@@ -699,8 +706,8 @@ private fun DrumGrid(
                         val on = vm.controller.state.value.drumSteps
                         val keys = (0 until length).filter { ((on.getOrNull(it)?.on ?: 0) shr ld.from) and 1 == 1 }
                             .map { it * 16 + ld.from }.toSet()
-                        setSel(keys)
-                        if (keys.isNotEmpty()) onSelectModeNow(true)
+                        if (keys.isEmpty()) fillLane = ld.from       // an empty lane: offer the auto-fill instead
+                        else { setSel(keys); onSelectModeNow(true) }
                     }
                     laneDrag = null; vp.nudgeOff = false
                     return
@@ -729,6 +736,25 @@ private fun DrumGrid(
         }
     }
 
+    fillLane?.let { lane ->
+        AlertDialog(
+            onDismissRequest = { fillLane = null },
+            title = { Text("Fill ${DRUM_LANES[lane]}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Place hits along the empty row:", style = MaterialTheme.typography.bodySmall)
+                    listOf(1 to "1/1  every step", 2 to "1/2  every 2nd", 4 to "1/4  every 4th", 8 to "1/8  every 8th", 16 to "1/16  every 16th")
+                        .forEach { (n, label) ->
+                            androidx.compose.material3.OutlinedButton(onClick = { vm.controller.fillDrumLane(lane, n); fillLane = null },
+                                modifier = Modifier.fillMaxWidth()) { Text(label, fontFamily = SloopFontFamily) }
+                        }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { fillLane = null }) { Text("Cancel") } },
+        )
+    }
+
     Canvas(modifier.clipToBounds().background(cs.background)
         .onSizeChanged { vp.size = it; vp.clamp() }
         .pointerInput(handler) { gridGestures(vp) { handler } }) {
@@ -744,9 +770,10 @@ private fun DrumGrid(
             for (r in r0..r1) for (c in c0..c1) {
                 val on = ((steps.getOrNull(c)?.on ?: 0) shr r) and 1 == 1
                 val isSel = on && selectMode && ((c to r) in picked || marquee?.hitsCell(c, r) == true)
+                val ds = if (on) steps.getOrNull(c) else null
                 val color = when {
                     isSel -> if (lifted != null && (c to r) in picked) cs.tertiary.copy(alpha = 0.3f) else cs.tertiary
-                    on -> cs.primary
+                    on -> cs.primary.copy(alpha = DRUM_LEVEL_ALPHA[ds?.lvl?.getOrNull(r) ?: 0])
                     (c / 4) % 2 == 0 -> cs.surfaceVariant
                     else -> cs.surface
                 }
@@ -754,6 +781,11 @@ private fun DrumGrid(
                     Size(cw - 2 * pad, rh - 2 * pad), CornerRadius(5f * d))
                 if (isSel) drawRoundRect(cs.onTertiary.copy(alpha = 0.9f), Offset(lw + c * cw - sx + pad, hdr + r * rh - sy + pad),
                     Size(cw - 2 * pad, rh - 2 * pad), CornerRadius(5f * d), style = Stroke(1.5f * d))
+                val rat = ds?.rat?.getOrNull(r) ?: 0
+                for (k in 1..rat) {                                     // a ratchet cuts the hit into x2..x4 parts
+                    val x = lw + c * cw - sx + pad + (cw - 2 * pad) * k / (rat + 1)
+                    drawLine(cs.background, Offset(x, hdr + r * rh - sy + pad), Offset(x, hdr + (r + 1) * rh - sy - pad), 1.5f * d)
+                }
             }
             gdrag?.let { g ->                            // the carried group (or its clone) where it would land
                 val (ds, dl) = drumShift(picked, length, g.dStep, g.dPitch)
@@ -789,7 +821,7 @@ private fun DrumGrid(
             drawRect(cs.surface, Offset(lw, 0f), Size(size.width - lw, hdr))
             with(painter) {
                 for (c in c0..c1) text("${c + 1}", lw + c * cw - sx + cw / 2, hdr / 2,
-                    if (c % 4 == 0) cs.primary else cs.onSurfaceVariant, 11f * d, Paint.Align.CENTER)
+                    if (c == selected) cs.tertiary else if (c % 4 == 0) cs.primary else cs.onSurfaceVariant, 11f * d, Paint.Align.CENTER)
             }
         }
         clipRect(0f, hdr, lw, size.height) {
@@ -1276,9 +1308,8 @@ private fun StepEditor(
     vm: SloopViewModel, state: DeviceState,
     step: Step?, index: Int, steps: List<Step>, patternLength: Int,
 ) {
-    Card(Modifier.fillMaxWidth().padding(16.dp, 12.dp)) {
-        Column(Modifier.padding(16.dp)) {
-            Text("Step ${index + 1}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    Box(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(horizontal = 4.dp)) {
             if (step != null && step.time == StepTime.NOTE && step.n > 0) {
                 val duration = noteLength(steps, index, patternLength)
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1318,28 +1349,7 @@ private fun StepEditor(
             }
 
             if ((state.info?.proto ?: 0) >= 7) {
-                Text("Timing", Modifier.padding(top = 14.dp, bottom = 4.dp),
-                    style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                val nudge = state.micro.getOrElse(index) { 0 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Nudge ${if (nudge > 0) "+" else ""}$nudge/64", Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyMedium)
-                    TextButton(onClick = { vm.controller.setStepMicro(index, nudge - 1) },
-                        enabled = nudge > -32) { Text("−") }
-                    TextButton(onClick = { vm.controller.setStepMicro(index, nudge + 1) },
-                        enabled = nudge < 31) { Text("+") }
-                }
-                if ((state.info?.proto ?: 0) >= 8) {
-                    val cond = state.fill.getOrElse(index) { 0 }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = cond == 0,
-                            onClick = { vm.controller.setStepFill(index, 0) }, label = { Text("Always") })
-                        FilterChip(selected = cond == 1,
-                            onClick = { vm.controller.setStepFill(index, 1) }, label = { Text("Fill") })
-                        FilterChip(selected = cond == 2,
-                            onClick = { vm.controller.setStepFill(index, 2) }, label = { Text("No fill") })
-                    }
-                }
+                StepTiming(vm, state, index)
 
                 Text("Locks", Modifier.padding(top = 12.dp, bottom = 4.dp),
                     style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1375,6 +1385,106 @@ private fun StepEditor(
             }
         }
     }
+}
+
+private val DRUM_LEVEL_ALPHA = floatArrayOf(0.85f, 0.4f, 0.65f, 1f)   // NORM, GHOST, SOFT, HARD
+private val DRUM_LEVELS = listOf("GHOST" to 1, "SOFT" to 2, "NORM" to 0, "HARD" to 3)
+
+/** The wide step modal: the step in the title with prev / next, the close cross on top. */
+@Composable
+private fun StepDialog(
+    title: String, onPrev: () -> Unit, onNext: () -> Unit, canPrev: Boolean, canNext: Boolean, onClose: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Card(Modifier.fillMaxWidth(0.96f).fillMaxHeight(0.9f)) {
+            Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    TextButton(onClick = onPrev, enabled = canPrev) { Text("◀") }
+                    TextButton(onClick = onNext, enabled = canNext) { Text("▶") }
+                    IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = "Close") }
+                }
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
+                    content()
+                }
+            }
+        }
+    }
+}
+
+/** Nudge and the fill condition of step [index] (proto 7 / 8). */
+@Composable
+private fun StepTiming(vm: SloopViewModel, state: DeviceState, index: Int) {
+    Text("Timing", Modifier.padding(top = 14.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val nudge = state.micro.getOrElse(index) { 0 }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Nudge ${if (nudge > 0) "+" else ""}$nudge/64", Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium)
+        TextButton(onClick = { vm.controller.setStepMicro(index, nudge - 1) }, enabled = nudge > -32) { Text("−") }
+        TextButton(onClick = { vm.controller.setStepMicro(index, nudge + 1) }, enabled = nudge < 31) { Text("+") }
+    }
+    if ((state.info?.proto ?: 0) >= 8) {
+        val cond = state.fill.getOrElse(index) { 0 }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = cond == 0, onClick = { vm.controller.setStepFill(index, 0) }, label = { Text("Always") })
+            FilterChip(selected = cond == 1, onClick = { vm.controller.setStepFill(index, 1) }, label = { Text("Fill") })
+            FilterChip(selected = cond == 2, onClick = { vm.controller.setStepFill(index, 2) }, label = { Text("No fill") })
+        }
+    }
+}
+
+/** One drum step: every sound that plays in it with its own level and ratchet, the free sounds to add, then the timing. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DrumStepEditor(vm: SloopViewModel, state: DeviceState, index: Int) {
+    val cs = MaterialTheme.colorScheme
+    val ds = state.drumSteps.getOrNull(index) ?: DrumStep(index, 0, IntArray(16), IntArray(16))
+    fun edit(lane: Int, on: Boolean? = null, lvl: Int? = null, rat: Int? = null) {
+        val cur = vm.controller.state.value.drumSteps.getOrNull(index) ?: DrumStep(index, 0, IntArray(16), IntArray(16))
+        val l = cur.lvl.copyOf(); val r = cur.rat.copyOf()
+        var bits = cur.on
+        if (on != null) { bits = if (on) bits or (1 shl lane) else bits and (1 shl lane).inv(); l[lane] = 0; r[lane] = 0 }
+        lvl?.let { l[lane] = it }; rat?.let { r[lane] = it }
+        vm.controller.setDrumStep(index, cur.copy(on = bits, lvl = l, rat = r))
+    }
+    val active = (0 until 16).filter { (ds.on shr it) and 1 == 1 }
+    Text("Sounds in this step", Modifier.padding(top = 4.dp, bottom = 6.dp),
+        style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
+    if (active.isEmpty()) Text("Empty - add a sound below", style = MaterialTheme.typography.bodyMedium)
+    active.forEach { lane ->
+        Card(Modifier.fillMaxWidth().padding(bottom = 8.dp), colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = cs.surfaceVariant)) {
+            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(DRUM_LANES[lane], Modifier.weight(1f), fontFamily = SloopFontFamily, fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleSmall)
+                    IconButton(onClick = { edit(lane, on = false) }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Filled.Close, contentDescription = "Remove ${DRUM_LANES[lane]}", modifier = Modifier.size(18.dp))
+                    }
+                }
+                Text("Level", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    DRUM_LEVELS.forEach { (n, v) ->
+                        FilterChip(selected = ds.lvl[lane] == v, onClick = { edit(lane, lvl = v) }, label = { Text(n) })
+                    }
+                }
+                Text("Ratchet (hits per step)", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (k in 0..3) FilterChip(selected = ds.rat[lane] == k, onClick = { edit(lane, rat = k) }, label = { Text("x${k + 1}") })
+                }
+            }
+        }
+    }
+    val free = (0 until 16).filter { it !in active }
+    if (free.isNotEmpty()) {
+        Text("Add sound", Modifier.padding(top = 6.dp, bottom = 4.dp),
+            style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            free.forEach { lane -> FilterChip(selected = false, onClick = { edit(lane, on = true) }, label = { Text(DRUM_LANES[lane]) }) }
+        }
+    }
+    if ((state.info?.proto ?: 0) >= 7) StepTiming(vm, state, index)
 }
 
 /** Two octaves from C3 (48). */

@@ -1040,6 +1040,19 @@ class DeviceController(context: Context) {
         }
     }
 
+    /** Fills the empty drum [lane] with a hit on every [every]th step (1 = all), from the first step. */
+    fun fillDrumLane(lane: Int, every: Int) = history.transaction {
+        val s = _state.value
+        if (s.link != Link.READY || !s.drumGrid || lane !in 0 until 16 || every < 1) return@transaction
+        for (i in 0 until s.patternLength step every) {
+            val cur = s.drumSteps.getOrNull(i) ?: continue
+            if ((cur.on shr lane) and 1 == 1) continue
+            val lvl = cur.lvl.copyOf().also { it[lane] = 0 }
+            val rat = cur.rat.copyOf().also { it[lane] = 0 }
+            setDrumStep(i, cur.copy(on = cur.on or (1 shl lane), lvl = lvl, rat = rat))
+        }
+    }
+
     /** The active pattern of the selected track as a clip to save (drum grid or piano roll); null otherwise. */
     fun captureClip(): Clip? {
         val s = _state.value
