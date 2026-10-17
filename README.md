@@ -4,6 +4,8 @@ A native Android app (Kotlin + Jetpack Compose) for the **M-VAVE FM-1** running 
 It talks to the device directly over USB-MIDI through Android's `MidiManager` — no WebView, no JavaScript bridge —
 so edits reach the FM-1 immediately.
 
+Every release is tested on my own phone connected to my own FM-1 running the latest SLOOP firmware before it is published.
+
 <table>
   <tr>
     <td><img src="screenshots/1.png" alt="Sound editor" /></td>
