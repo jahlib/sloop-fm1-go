@@ -34,6 +34,7 @@ import com.sloop.go.store.ClipNote
 import com.sloop.go.store.Smf
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -76,6 +77,7 @@ class DeviceController(context: Context) {
     /** The playhead between answers (see [PlayClock]). */
     val clock = PlayClock()
     val transport: StateFlow<Live?> = _transport.asStateFlow()
+    val recordingTrace = RecordingTrace()
 
     /** Undo / redo, in RAM only: every edit is also noted here and is put back through the very same queue. */
     val history = EditHistory(onChange = { u, r -> _state.update { it.copy(canUndo = u, canRedo = r) } })
@@ -118,6 +120,12 @@ class DeviceController(context: Context) {
     private val liveMasterQ = Channel<Int>(Channel.CONFLATED)
     private val holdOps = Channel<suspend () -> Unit>(Channel.UNLIMITED)
     private val held = HashMap<Triple<Int, Int, Int>, Int>()
+    private class SlicerHold(val connection: MidiConnection, val values: Map<Int, Int>)
+    private val heldSlicers = HashMap<Int, SlicerHold>()
+
+    // params.c: SLCR=STUT (2), PAT=16, RATE=1/16 (1), DEPTH=100% (127).
+    // Configure the pattern/rate/depth before enabling STUT; restore mode last too.
+    private val stutterParams = listOf(46 to 16, 47 to 1, 48 to 127, 45 to 2)
 
     init {
         scope.launch { editWorker() }
@@ -158,6 +166,64 @@ class DeviceController(context: Context) {
         }
     }
 
+    /** Momentary Slicer preset for any track, including drums. Down/up share the
+     * hold queue so even a quick release restores the snapshot taken by its press. */
+    fun holdSlicer(track: Int, down: Boolean) {
+        val connection = conn ?: return
+        if (down && (_state.value.link != Link.READY || (_state.value.info?.proto ?: 0) < 4 ||
+            track !in 0 until (_state.value.info?.ntrk ?: 0))) return
+        holdOps.trySend {
+            if (conn !== connection) return@trySend
+            heldSlicers[track]?.takeIf { it.connection !== connection }?.let { heldSlicers.remove(track) }
+            if (down) {
+                if (track in heldSlicers) return@trySend
+                try {
+                    val values = linkedMapOf<Int, Int>()
+                    // Read every original before writing anything. Never snapshot a
+                    // partly applied preset, or use the currently selected track's dump.
+                    for ((id, _) in stutterParams) {
+                        check(conn === connection) { "FM-1 disconnected" }
+                        values[id] = Parse.trackParam(request(Requests.trackParamGet(track, id), quiet = true)).value
+                    }
+                    heldSlicers[track] = SlicerHold(connection, values)
+                    for ((id, value) in stutterParams) writeSlicerParam(connection, track, id, value)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // A timeout may follow a successful device write. Restore all
+                    // originals, including parameters whose acknowledgement was lost.
+                    if (restoreSlicer(track))
+                        _state.update { it.copy(queueError = "STU could not be applied: ${e.message}") }
+                }
+            } else restoreSlicer(track)
+        }
+    }
+
+    private suspend fun writeSlicerParam(connection: MidiConnection, track: Int, id: Int, value: Int) {
+        check(conn === connection) { "FM-1 disconnected" }
+        val v = Parse.trackParam(request(Requests.trackParamSet(track, id, value), quiet = true)).value
+        if (conn !== connection) return
+        synchronized(pendingLock) { lastParamSent[paramKey(0, id, track)] = v }
+        _state.update { s -> if (s.selectedTrack == track) s.withParam(0, id, v) else s }
+    }
+
+    private suspend fun restoreSlicer(track: Int): Boolean {
+        val saved = heldSlicers[track] ?: return true
+        if (conn !== saved.connection) {
+            heldSlicers.remove(track)
+            return true
+        }
+        var failure: Exception? = null
+        for ((id, value) in saved.values) {
+            try { writeSlicerParam(saved.connection, track, id, value) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { failure = e } // still attempt the remaining originals
+        }
+        if (failure == null) heldSlicers.remove(track)
+        else _state.update { it.copy(queueError = "STU restore failed — release STU again to retry") }
+        return failure == null
+    }
+
     private fun clearDrafts(): Int = synchronized(draftLock) {
         val count = (draftSynth.keys + draftDrum.keys).size
         draftSynth.clear(); draftDrum.clear()
@@ -175,7 +241,10 @@ class DeviceController(context: Context) {
             engine.requestUsbPermission(appContext)
             _live.value = LiveNotes()
             val c = engine.open(deviceId, onReceive = ::onFrame, onLost = { onLost() },
-                onNote = { ch, note, on -> _live.update { it.with(ch, note, on) }; onKey(ch, note, on) })
+                onNote = { ch, note, on ->
+                    _live.update { it.with(ch, note, on) }
+                    recordingTrace.note(ch, note, on)
+                })
             if (c == null) {
                 _state.update { it.copy(link = Link.DISCONNECTED, status = "Could not open device") }
                 return@launch
@@ -200,6 +269,8 @@ class DeviceController(context: Context) {
     }
 
     private suspend fun disconnectInternal(silent: Boolean) {
+        resyncJob?.cancel(); resyncJob = null
+        recordingTrace.stop()
         keepAlive?.cancel(); keepAlive = null
         inflight?.deferred?.cancel()
         inflight = null
@@ -223,6 +294,8 @@ class DeviceController(context: Context) {
 
     private fun onLost() {
         scope.launch {
+            resyncJob?.cancel(); resyncJob = null
+            recordingTrace.stop()
             conn?.close(); conn = null
             _live.value = LiveNotes()
             _transport.value = null
@@ -279,16 +352,32 @@ class DeviceController(context: Context) {
         }
     }
 
-    private suspend fun loadSteps(info: Info, dump: Dump) {
+    private suspend fun loadSteps(info: Info, dump: Dump, unchangedSince: DeviceState? = null) {
+        val track = _state.value.selectedTrack
+        val connection = conn
+        fun current(st: DeviceState): Boolean =
+            conn === connection && st.selectedTrack == track &&
+                (unchangedSince == null ||
+                    (st.link == Link.READY && st.steps === unchangedSince.steps &&
+                        st.drumSteps === unchangedSince.drumSteps))
         val drum = dump.engine >= info.nengines && info.proto >= 5
         if (drum) {
             val ds = ArrayList<DrumStep>(info.nstep)
-            for (i in 0 until info.nstep) ds.add(Parse.drumStep(request(Requests.drumStepGet(i))))
-            _state.update { it.copy(drumSteps = ds, steps = emptyList()).withQueuedEdits().withDraft() }
+            for (i in 0 until info.nstep) {
+                if (!current(_state.value)) return
+                ds.add(Parse.drumStep(request(Requests.drumStepGet(i))))
+            }
+            _state.update { if (!current(it)) it
+                else it.copy(drumSteps = ds, steps = emptyList()).withQueuedEdits().withDraft() }
         } else {
             val st = ArrayList<Step>(info.nstep)
-            for (i in 0 until info.nstep) st.add(Parse.step(request(Requests.stepGet(i))))
-            _state.update { it.copy(steps = st, drumSteps = emptyList()).withQueuedEdits().withDraft() }
+            for (i in 0 until info.nstep) {
+                if (!current(_state.value)) return
+                st.add(if (info.ntrk > 0) Parse.trackStep(request(Requests.trackStepGet(track, i))).step
+                    else Parse.step(request(Requests.stepGet(i))))
+            }
+            _state.update { if (!current(it)) it
+                else it.copy(steps = st, drumSteps = emptyList()).withQueuedEdits().withDraft() }
         }
     }
 
@@ -418,6 +507,7 @@ class DeviceController(context: Context) {
 
     fun selectTrack(track: Int) {
         if (_state.value.link != Link.READY) return
+        resyncJob?.cancel(); resyncJob = null
         scope.launch {
             _state.update { it.copy(link = Link.LOADING, status = "Loading track…") }
             val result = runCatching {
@@ -931,13 +1021,12 @@ class DeviceController(context: Context) {
         return if (len == n.len) null else n.copy(len = len)
     }
 
-    private fun applySynthBatch(batch0: List<UserEdit.Synth>, record: Boolean = true) {
-        // the device keeps only ACCENT and SLIDE of a written step (the 2.7 "going on" bits are its own): so does the local copy
-        val batch = batch0.map { it.copy(step = it.step.copy(flags = it.step.flags and CONT_ALL.inv())) }
+    private fun applySynthBatch(batch: List<UserEdit.Synth>, record: Boolean = true): Boolean {
         val s = _state.value
         if (s.link != Link.READY || batch.isEmpty() ||
-            batch.any { it.track != s.selectedTrack || it.index !in s.steps.indices }) return
-        if (s.sequencerMode == SequencerMode.NOW && !enqueueBatch(batch)) return
+            batch.any { it.track != s.selectedTrack || it.index !in s.steps.indices }) return false
+        if (!canWriteSynthSteps(batch)) return false
+        if (s.sequencerMode == SequencerMode.NOW && !enqueueBatch(batch)) return false
         if (record) history.transaction {
             batch.forEach { e ->
                 val was = s.steps[e.index]
@@ -951,10 +1040,27 @@ class DeviceController(context: Context) {
             if (current.selectedTrack != s.selectedTrack) current else current.copy(steps = list,
                 draftTracks = draftIds())
         }
+        return true
+    }
+
+    /** STEP_SET on SLOOP 2.7 discards SF_CONT. Rewriting these steps changes their
+     * playback, even if the pitches stay the same. Do not silently substitute SLIDE. */
+    private fun canWriteSynthSteps(batch: List<UserEdit>): Boolean {
+        val s = _state.value
+        val losesContinuation = batch.filterIsInstance<UserEdit.Synth>().any { e ->
+            e.step.hasContinuations() ||
+                (e.track == s.selectedTrack && s.steps.getOrNull(e.index)?.hasContinuations() == true)
+        }
+        if (losesContinuation) {
+            _state.update { it.copy(queueError =
+                "Edit not sent: STEP_SET cannot preserve this step's held notes. Edit this step on FM-1.") }
+        }
+        return !losesContinuation
     }
 
     private fun enqueueBatch(batch: List<UserEdit>): Boolean {
         if (_state.value.link != Link.READY) return false
+        if (!canWriteSynthSteps(batch)) return false
         val size = synchronized(pendingLock) {
             if (edits.size + batch.size > maxEdits) -1
             else { batch.forEach { edits.addLast(it) }; edits.size }
@@ -968,15 +1074,16 @@ class DeviceController(context: Context) {
     fun clearPattern() = history.transaction {
         val s = _state.value
         if (s.link != Link.READY) return@transaction
+        if (!s.drumGrid) {
+            // Validate the whole action before clearing any steps.
+            val batch = s.steps.take(s.patternLength).filter { it.n != 0 || it.time != 2 }
+                .map { UserEdit.Synth(s.selectedTrack, it.index, Step(it.index, 0, IntArray(4), 2, 0, 0)) }
+            if (batch.isNotEmpty()) applySynthBatch(batch)
+            return@transaction
+        }
         for (i in 0 until s.patternLength) {
-            if (s.drumGrid) {
-                val d = s.drumSteps.getOrNull(i) ?: continue
-                if (d.on != 0) setDrumStep(i, DrumStep(i, 0, IntArray(16), IntArray(16)))
-            } else {
-                val step = s.steps.getOrNull(i) ?: continue
-                if (step.n != 0 || step.time != 2) setStep(i,
-                    Step(i, 0, intArrayOf(0, 0, 0, 0), 2, 0, 0))
-            }
+            val d = s.drumSteps.getOrNull(i) ?: continue
+            if (d.on != 0) setDrumStep(i, DrumStep(i, 0, IntArray(16), IntArray(16)))
         }
     }
 
@@ -1218,6 +1325,7 @@ class DeviceController(context: Context) {
 
     private fun enqueue(edit: UserEdit, continuous: Boolean = false): Boolean {
         if (_state.value.link != Link.READY) return false
+        if (!canWriteSynthSteps(listOf(edit))) return false
         val size = synchronized(pendingLock) {
             if (continuous) {
                 for (i in edits.lastIndex downTo if (sending) 1 else 0) {
@@ -1271,6 +1379,9 @@ class DeviceController(context: Context) {
 
     private suspend fun applyEntry(e: HistoryEntry, forward: Boolean): Boolean {
         e.track?.let { if (!selectTrackAndWait(it)) return false }
+        if (!canWriteSynthSteps(e.changes.filterIsInstance<Change.Synth>().map {
+            UserEdit.Synth(it.tr, it.index, if (forward) it.after else it.before)
+        })) return false
         val synth = ArrayList<UserEdit.Synth>()
         for (c in if (forward) e.changes else e.changes.asReversed()) when (c) {
             is Change.Param -> setParam(c.scope, c.id, if (forward) c.after else c.before, record = false)
@@ -1282,7 +1393,7 @@ class DeviceController(context: Context) {
             is Change.Lock -> setStepLock(c.step, c.param, if (forward) c.after else c.before, record = false)
             is Change.Custom<*> -> withContext(Dispatchers.Main) { c.replay(forward) }
         }
-        if (synth.isNotEmpty()) applySynthBatch(synth, record = false)
+        if (synth.isNotEmpty() && !applySynthBatch(synth, record = false)) return false
         return true
     }
 
@@ -1391,6 +1502,7 @@ class DeviceController(context: Context) {
                 val d = CompletableDeferred<IntArray>()
                 inflight = Inflight(req.cmd, req.args, d)
                 val res = try {
+                    recordingTrace.frame("TX", req.cmd, req.args)
                     c.send(frame(req.cmd, req.args))
                     lastSent = SystemClock.elapsedRealtime()
                     withTimeoutOrNull(timeout) { d.await() }
@@ -1407,6 +1519,7 @@ class DeviceController(context: Context) {
     /** Incoming reassembled frame from the MIDI thread. */
     private fun onFrame(bytes: ByteArray) {
         val f = unframe(bytes) ?: return
+        recordingTrace.frame("RX", f.cmd, f.args)
         if (f.cmd in Cmd.PUSH) {
             handlePush(f.cmd, f.args)
             return
@@ -1429,12 +1542,14 @@ class DeviceController(context: Context) {
             }
             Cmd.RELOAD -> {
                 if (System.currentTimeMillis() < selfReloadUntil) return
+                resyncJob?.cancel(); resyncJob = null
                 history.dropTrack(_state.value.selectedTrack)
                 scope.launch { runCatching { reloadAfterChange() } }
             }
             Cmd.STEP_CHANGED -> {
                 val sc = Parse.stepChanged(args)
-                scope.launch { runCatching { reloadOneStep(sc.index) } }
+                if (sc.track != _state.value.selectedTrack) return
+                scope.launch { runCatching { reloadOneStep(sc.index, sc.track) } }
                 scheduleResync()
             }
             Cmd.TRACK_CHANGED -> {
@@ -1477,59 +1592,41 @@ class DeviceController(context: Context) {
 
     private var resyncJob: Job? = null
 
-    // ---- recorded notes released earlier than the device wrote them ----
-    // While the FM-1 records, its hold ties every note of the chord until the LAST key is up, so a note let go earlier still
-    // comes out as long as the one pressed after it. The keys' own MIDI note-offs say when each one really ended; the
-    // release is remembered with the playhead and, once the recording is over and the track re-read, the note is cut there.
-    private class KeyPress(val pos: Float)
-    private class KeyRelease(val track: Int, val pitch: Int, val start: Float, val end: Float, val at: Long)
-    private val keyLock = Any()
-    private val presses = HashMap<Int, KeyPress>()
-    private val releases = ArrayList<KeyRelease>()
-
-    private fun recording(s: DeviceState = _state.value): Boolean {
-        val lv = _transport.value ?: return false
-        return lv.playing && (lv.recs shr s.selectedTrack) and 1 == 1
-    }
-
-    private fun onKey(ch: Int, note: Int, on: Boolean) {
+    /** Read a stopped synth track explicitly by number for comparison with the UI.
+     * No STEP_SET, no state replacement, no reconstruction from note-offs. */
+    suspend fun recordingReport(): String {
         val s = _state.value
-        if (s.link != Link.READY || s.isDrum || ch != LiveNotes.channelOf(s)) return
-        val now = System.nanoTime()
-        synchronized(keyLock) {
-            if (!on) {
-                val p = presses.remove(note) ?: return
-                if (!recording(s)) return
-                val end = clock.position(s.selectedTrack, now / 1e9)
-                if (end >= 0f) releases.add(KeyRelease(s.selectedTrack, note, p.pos, end, now / 1_000_000))
-            } else if (recording(s)) {
-                val pos = clock.position(s.selectedTrack, now / 1e9)
-                if (pos >= 0f) presses[note] = KeyPress(pos)
+        val info = s.info ?: error("Connect FM-1 first")
+        check(s.link == Link.READY && !s.isDrum && info.proto >= 3) { "Select T1–T3 on the connected FM-1" }
+        check(!s.playing) { "Stop playback before saving the trace" }
+        check(s.queuedEdits == 0 && s.draftTracks.isEmpty()) { "Finish queued edits and Store drafts first" }
+        val connection = conn
+        val raw = ArrayList<Step>()
+        fun checkContext() {
+            check(conn === connection && _state.value.link == Link.READY &&
+                _state.value.selectedTrack == s.selectedTrack && !_state.value.playing &&
+                _state.value.queuedEdits == 0 && _state.value.draftTracks.isEmpty()) {
+                "Track or playback changed during capture. Stop and save again."
             }
         }
-    }
-
-    private fun hasReleases() = synchronized(keyLock) { releases.isNotEmpty() }
-
-    /** Cuts the recorded notes at the step their keys were let go (see above); one undo entry. */
-    private fun trimRecorded() {
-        val limit = System.nanoTime() / 1_000_000 - 60_000
-        val rel = synchronized(keyLock) { val c = releases.filter { it.at >= limit }; releases.clear(); c }
-        if (rel.isEmpty()) return
-        editNotes { st, notes ->
-            val len = st.patternLength
-            fun wrap(v: Int) = ((v % len) + len) % len
-            var changed = false
-            val out = notes.map { n ->
-                val r = rel.firstOrNull { it.track == st.selectedTrack && it.pitch == n.pitch &&
-                    wrap(n.start - kotlin.math.floor(it.start).toInt()).let { d -> d <= 1 || d == len - 1 } } ?: return@map n
-                val e = kotlin.math.floor(r.end).toInt()
-                val last = if (r.end - e < 0.5f) e - 1 else e
-                val d = wrap(last - n.start)
-                val keep = if (d > len / 2) 1 else d + 1
-                if (keep < n.len) { changed = true; n.copy(len = keep) } else n
-            }
-            if (changed) out else null
+        checkContext()
+        val parameters = request(Requests.trackDump(s.selectedTrack))
+        for (i in 0 until info.nstep) {
+            checkContext()
+            val reply = Parse.trackStep(request(Requests.trackStepGet(s.selectedTrack, i)))
+            check(reply.track == s.selectedTrack && reply.step.index == i) { "Unexpected track step reply" }
+            raw.add(reply.step)
+        }
+        checkContext()
+        recordingTrace.stop()
+        return buildString {
+            appendLine("Sloop Go recording diagnostic")
+            appendLine("Firmware=${info.version} protocol=${info.proto} track=${s.selectedTrack} length=${s.patternLength}")
+            appendLine("TRACK_DUMP reply=${parameters.joinToString(",")}")
+            appendLine("Cached micro=${s.micro} fill=${s.fill} locks=${s.locks}")
+            appendLine(RecordingTrace.steps("APP before fresh read", s.steps, s.patternLength))
+            appendLine(RecordingTrace.steps("DEVICE fresh TRACK_STEP reads", raw, s.patternLength))
+            appendLine(recordingTrace.text())
         }
     }
 
@@ -1548,34 +1645,39 @@ class DeviceController(context: Context) {
             if (s.link != Link.READY) return@launch
             if (synchronized(pendingLock) { edits.isNotEmpty() || sending }) { scheduleResync(); return@launch }
             runCatching {
-                loadSteps(info, dump); loadStepExtras(info)
-                if (hasReleases()) {
-                    var waited = 0
-                    while (recording() && waited < 240) { delay(500); waited++ }     // not while the device still records
-                    if (!recording() && hasReleases()) {
-                        loadSteps(info, dump); loadStepExtras(info)
-                        trimRecorded()
-                    }
-                }
+                loadSteps(info, dump, unchangedSince = s)
+                if (_state.value.selectedTrack == s.selectedTrack && _state.value.link == Link.READY)
+                    loadStepExtras(info)
             }
         }
     }
 
-    private suspend fun reloadOneStep(index: Int) {
+    private suspend fun reloadOneStep(index: Int, track: Int) {
         val s = _state.value
+        if (s.selectedTrack != track || s.link != Link.READY) return
         if (s.sequencerMode == SequencerMode.LATE && s.selectedTrack in s.draftTracks) return
         val info = s.info ?: return
+        if (index !in 0 until info.nstep) return
+        val connection = conn
         if (s.drumGrid) {
             val ds = Parse.drumStep(request(Requests.drumStepGet(index)))
-            _state.update { st -> val l = st.drumSteps.toMutableList(); if (index < l.size) l[index] = ds
+            _state.update { st ->
+                if (conn !== connection || st.selectedTrack != track || st.link != Link.READY ||
+                    st.drumSteps.getOrNull(index) != s.drumSteps.getOrNull(index)) return@update st
+                val l = st.drumSteps.toMutableList(); if (index < l.size) l[index] = ds
                 st.copy(drumSteps = l).withQueuedEdits().withDraft() }
         } else {
-            val step = Parse.step(request(Requests.stepGet(index)))
-            _state.update { st -> val l = st.steps.toMutableList(); if (index < l.size) l[index] = step
+            val step = if (info.ntrk > 0) Parse.trackStep(request(Requests.trackStepGet(track, index))).step
+                else Parse.step(request(Requests.stepGet(index)))
+            _state.update { st ->
+                if (conn !== connection || st.selectedTrack != track || st.link != Link.READY ||
+                    st.steps.getOrNull(index) != s.steps.getOrNull(index)) return@update st
+                val l = st.steps.toMutableList(); if (index < l.size) l[index] = step
                 st.copy(steps = l).withQueuedEdits().withDraft() }
         }
         // v7+: a step's signature covers its nudge, locks and fill — the push may mean one of them changed
-        if (info.proto >= 7) loadStepExtras(info)
+        if (info.proto >= 7 && conn === connection && _state.value.selectedTrack == track &&
+            _state.value.link == Link.READY) loadStepExtras(info)
     }
 
     // ---------------------------------------------------------------- keepalive ---

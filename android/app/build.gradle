@@ -11,8 +11,8 @@ android {
         applicationId 'com.sloop.go'
         minSdk 24            // android.media.midi (MidiManager) is API 23; 24 for androidx baseline
         targetSdk 34
-        versionCode 41
-        versionName '1.7.15'
+        versionCode 42
+        versionName '1.7.16'
     }
 
     buildFeatures {
@@ -55,4 +55,5 @@ dependencies {
     implementation 'androidx.compose.material:material-icons-extended'
 
     debugImplementation 'androidx.compose.ui:ui-tooling'
+    testImplementation 'junit:junit:4.13.2'
 }

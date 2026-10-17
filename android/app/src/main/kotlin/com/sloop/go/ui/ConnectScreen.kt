@@ -3,6 +3,8 @@
 // see NOTICE.md.
 package com.sloop.go.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,13 +19,22 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.sloop.go.device.DeviceState
 import com.sloop.go.device.Link
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun ConnectScreen(vm: SloopViewModel, state: DeviceState) {
@@ -40,8 +51,11 @@ fun ConnectScreen(vm: SloopViewModel, state: DeviceState) {
             style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         if (state.queueError != null && state.link == Link.READY) {
             item {
-                Button(onClick = { vm.controller.retryEdits() }, modifier = Modifier.padding(horizontal = 16.dp)) {
-                    Text("Retry ${state.queuedEdits} queued edits")
+                Text(state.queueError, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error)
+                if (state.queuedEdits > 0) {
+                    Button(onClick = { vm.controller.retryEdits() }, modifier = Modifier.padding(horizontal = 16.dp)) {
+                        Text("Retry ${state.queuedEdits} queued edits")
+                    }
                 }
             }
         }
@@ -124,6 +138,8 @@ fun ConnectScreen(vm: SloopViewModel, state: DeviceState) {
             }
         }
 
+        item { RecordingDiagnostics(vm, state, version) }
+
         item {
             Card(Modifier.fillMaxWidth().padding(16.dp, 12.dp)) {
                 Column(Modifier.padding(16.dp)) {
@@ -170,6 +186,65 @@ fun ConnectScreen(vm: SloopViewModel, state: DeviceState) {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun RecordingDiagnostics(vm: SloopViewModel, state: DeviceState, version: String) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val active by vm.controller.recordingTrace.active.collectAsState()
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var pending by remember { mutableStateOf<String?>(null) }
+    val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        val report = pending
+        pending = null
+        if (uri != null && report != null) scope.launch {
+            busy = true
+            try {
+                withContext(Dispatchers.IO) {
+                    val output = context.contentResolver.openOutputStream(uri) ?: error("Cannot open file")
+                    output.use { it.write(report.toByteArray(Charsets.UTF_8)) }
+                }
+                message = "Trace saved"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                message = "Save failed: ${e.message}"
+            } finally { busy = false }
+        }
+    }
+    val ready = state.link == Link.READY && !state.isDrum && (state.info?.proto ?: 0) >= 3
+    Card(Modifier.fillMaxWidth().padding(16.dp, 6.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Recording diagnostics", style = MaterialTheme.typography.titleMedium)
+            Text("Start a trace, record a short example on T1–T3, then stop playback and save the trace. " +
+                "It reads the FM-1 pattern without changing notes.",
+                style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(enabled = ready && !busy && pending == null, onClick = {
+                    vm.controller.recordingTrace.start(state)
+                    message = "Capturing keys and device replies…"
+                }) { Text(if (active) "Restart trace" else "Start trace") }
+                OutlinedButton(enabled = ready && !state.playing && !busy && pending == null, onClick = {
+                    busy = true
+                    scope.launch {
+                        try {
+                            val report = withContext(Dispatchers.IO) { vm.controller.recordingReport() }
+                            pending = "App version=$version\n$report"
+                            saver.launch("sloop-recording-trace.txt")
+                            message = "Choose where to save the trace"
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            message = "Capture failed: ${e.message}"
+                        } finally { busy = false }
+                    }
+                }) { Text(if (busy) "Reading…" else "Save trace") }
+            }
+            message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
 }

@@ -146,14 +146,13 @@ private fun MixCard(state: DeviceState, l: Live?, ctl: com.sloop.go.device.Devic
                 for (t in 0 until n) {
                     val e = state.tracks?.tracks?.getOrNull(t)
                     val drum = e != null && e.engine >= info.nengines
-                    val eng = if (e == null) "" else if (drum) "DRUM" else info.engines.getOrNull(e.engine) ?: ""
                     val muted = ((l?.mutes ?: 0) shr t) and 1 == 1
                     val solo = ((l?.solos ?: 0) shr t) and 1 == 1
                     Column(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(10.dp)).background(cs.surface.copy(alpha = 0.5f)).padding(3.dp),
                         verticalArrangement = Arrangement.spacedBy(3.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("T${t + 1}", fontFamily = SloopFontFamily, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                        Text(eng, maxLines = 1, fontSize = 8.sp, color = cs.onSurfaceVariant)
-                        SectionLabel("SEND · HOLD")
+                        Pad("STU", false, Modifier.fillMaxWidth().weight(1f), small = true, accent = SEND_C,
+                            down = { ctl.holdSlicer(t, true) }, up = { ctl.holdSlicer(t, false) })
                         // the drum track has no DST / CHO: its two sends are the global drum REV and DLY
                         val sends = if (drum) listOf(null, null, "REV" to G_DRREV, "DLY" to G_DRDLY)
                             else listOf("DST" to 33, "CHO" to 34, "DLY" to 35, "REV" to 36)

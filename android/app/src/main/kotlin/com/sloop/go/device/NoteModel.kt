@@ -125,6 +125,8 @@ const val CONT_ALL = 15 * CONT0
 private fun contPitches(st: Step): Set<Int> =
     st.notes.take(st.n.coerceIn(0, 4)).filterIndexed { k, _ -> st.flags and (CONT0 shl k) != 0 }.toSet()
 
+fun Step.hasContinuations(): Boolean = time == StepTime.NOTE && flags and CONT_ALL != 0
+
 fun decodeNotes(steps: List<Step>, length: Int): List<PNote> {
     val out = ArrayList<PNote>()
     val open = HashMap<Int, Int>()
@@ -140,7 +142,14 @@ fun decodeNotes(steps: List<Step>, length: Int): List<PNote> {
             else -> {
                 val set = st.notes.take(st.n.coerceIn(0, 4)).toSet()
                 val legato = i > 0 && ((steps.getOrNull(i - 1)?.flags ?: 0) and SLIDE) != 0
-                close(i - 1, (if (legato) set else emptySet()) + contPitches(st))
+                // seq_step handles SF_CONT before SLIDE. With continuation flags present,
+                // only flagged pitches continue; an unflagged pitch is a new attack even
+                // if the preceding step has SLIDE and already contains that pitch.
+                close(i - 1, when {
+                    st.hasContinuations() -> contPitches(st)
+                    legato -> set
+                    else -> emptySet()
+                })
                 set.forEach { if (it !in open) open[it] = i }
             }
         }
@@ -155,14 +164,21 @@ fun decodeNotes(steps: List<Step>, length: Int): List<PNote> {
  * flag of the step before, which [decodeNotes] merges back into one note.
  */
 fun encodeNotes(old: List<Step>, length: Int, notes: List<PNote>): List<Step>? {
+    val original = decodeNotes(old, length)
+    val oldSets = List(length) { i -> original.filter { i in it.start..it.end }.map { it.pitch }.toSet() }
+    val oldStarts = List(length) { i -> original.filter { it.start == i }.map { it.pitch }.toSet() }
+    val newStarts = List(length) { i -> notes.filter { it.start == i }.map { it.pitch }.toSet() }
     val sets = ArrayList<Set<Int>>()
     val wants = ArrayList<Step>()
     for (i in 0 until length) {
         val cur = old.getOrNull(i) ?: return null
         val set = notes.filter { i in it.start..it.end }.map { it.pitch }.toSet()
         if (set.size > 4) return null
-        val starts = notes.any { it.start == i }
+        val starts = newStarts[i].isNotEmpty()
         val want = when {
+            // Editing another note must not rewrite an untouched SF_CONT-only NOTE
+            // as TIE, or change its flags/dynamics. Preserve the device's raw step.
+            set == oldSets[i] && newStarts[i] == oldStarts[i] -> cur
             set.isEmpty() -> blank(cur, StepTime.REST)
             !starts && i > 0 && set == sets[i - 1] -> blank(cur, StepTime.TIE)
             else -> noteStep(cur, set)
@@ -172,6 +188,7 @@ fun encodeNotes(old: List<Step>, length: Int, notes: List<PNote>): List<Step>? {
     }
     for (i in 1 until length) {
         if (wants[i].time != StepTime.NOTE) continue
+        if (sets[i - 1] == oldSets[i - 1] && sets[i] == oldSets[i] && newStarts[i] == oldStarts[i]) continue
         val prev = wants[i - 1]
         val going = notes.filter { it.start <= i - 1 && it.end >= i }.map { it.pitch }
         if (going.isNotEmpty() && contPitches(wants[i]).containsAll(going)) continue   // the device carries them on itself (2.7)
@@ -203,7 +220,8 @@ private fun noteStep(cur: Step, set: Set<Int>): Step {
 }
 
 private fun sameShape(cur: Step, want: Step): Boolean = cur.time == want.time && when (want.time) {
-    StepTime.NOTE -> cur.n == want.n && cur.notes.take(cur.n.coerceIn(0, 4)).toSet() ==
+    StepTime.NOTE -> cur.n == want.n && (cur.flags and CONT_ALL) == (want.flags and CONT_ALL) &&
+        cur.notes.take(cur.n.coerceIn(0, 4)).toSet() ==
         want.notes.take(want.n).toSet()
     else -> cur.n == 0
 }
