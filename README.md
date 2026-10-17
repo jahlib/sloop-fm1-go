@@ -3,8 +3,7 @@
 A native Android app (Kotlin + Jetpack Compose) for the **M-VAVE FM-1** running the **SLOOP** firmware.
 It talks to the device directly over USB-MIDI through Android's `MidiManager` — no WebView, no JavaScript bridge —
 so edits reach the FM-1 immediately.
-
-Every release is tested on my own phone connected to my own FM-1 running the latest SLOOP firmware before it is published.
+Every release is tested on my own phone, connected to my own FM-1 running the latest SLOOP firmware, before being published. But it may still contain bugs.
 
 <table>
   <tr>
@@ -26,7 +25,7 @@ Every release is tested on my own phone connected to my own FM-1 running the lat
 
 ## Install on your phone
 
-**⬇ [Download sloop_go_1.7.13.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.7.13/sloop_go_1.7.13.apk)**
+**⬇ [Download sloop_go_1.7.14.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.7.14/sloop_go_1.7.14.apk)**
 — other versions live on the [Releases](https://github.com/jahlib/sloop-fm1-go/releases) page.
 
 0. You need an **M-VAVE FM-1** device with the latest [**SLOOP** firmware](https://github.com/isod89/sloop-fm1)

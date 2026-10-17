@@ -148,6 +148,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     var browser by remember { mutableStateOf<BrowserMode?>(null) }
     var carry by remember { mutableStateOf<Carry?>(null) }
     val kind = if (state.drumGrid) ClipKind.DRUM else ClipKind.PIANO
+    val newLen = remember(state.selectedTrack) { mutableIntStateOf(1) }   // the length a tapped-in note gets, in steps
 
     // Refit once the loaded steps of another track actually arrive: a track switch replaces the
     // steps list (user edits keep the same track), and a loaded clip refits right away.
@@ -160,7 +161,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     Column(Modifier.fillMaxSize()) {
         ControlPanel(vm, state, nav, onPick = { picker = true }, onClear = { askClear = true }, onFit = { fitTick++ },
             onSave = { browser = BrowserMode.SAVE }, onLoad = { browser = BrowserMode.LOAD },
-            onOptions = { options = true }, optionsLabel = "Step ${selected + 1}",
+            onOptions = { options = true }, optionsLabel = "Step ${selected + 1}", newLen = if (state.drumGrid) null else newLen,
             selectMode = selectMode, onSelectMode = { selectMode = it }, selCount = noteSel.size,
             onTranspose = { d ->
                 if (selectMode && noteSel.isNotEmpty()) {
@@ -180,7 +181,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
         if (state.drumGrid) DrumGrid(vm, state, fitTick, selectMode, { selectMode = it }, noteSel, { noteSel = it },
             selected, { sel = it }, Modifier.weight(1f).fillMaxWidth())
         else PianoRoll(vm, state, fitTick, selected, { sel = it }, selectMode, noteSel, { noteSel = it },
-            carry, { carry = null; browser = null }, Modifier.weight(1f).fillMaxWidth())
+            carry, { carry = null; browser = null }, newLen, Modifier.weight(1f).fillMaxWidth())
     }
     browser?.let { mode ->
         ClipBrowserOverlay(vm, kind, mode, carrying = carry != null,
@@ -219,6 +220,7 @@ private fun ControlPanel(
     vm: SloopViewModel, state: DeviceState, nav: @Composable () -> Unit, onPick: () -> Unit,
     onSave: () -> Unit, onLoad: () -> Unit,
     onClear: () -> Unit, onFit: () -> Unit, onOptions: (() -> Unit)?, optionsLabel: String,
+    newLen: androidx.compose.runtime.MutableIntState?,
     selectMode: Boolean, onSelectMode: (Boolean) -> Unit, selCount: Int, onDeleteSel: () -> Unit,
     onTranspose: (Int) -> Unit,
 ) {
@@ -278,6 +280,7 @@ private fun ControlPanel(
         IconButton(onClick = onDeleteSel, enabled = selCount > 0, modifier = Modifier.size(32.dp)) {
             Icon(Icons.Filled.Delete, contentDescription = "Delete selected", modifier = Modifier.size(20.dp))
         }
+        if (newLen != null) NewLengthSelect(state, newLen)
         sep()
         mini(Icons.Filled.Save, "Save pattern", onSave)
         mini(Icons.Filled.FolderOpen, "Load pattern", onLoad)
@@ -971,7 +974,7 @@ private fun clampShift(sel: List<PNote>, length: Int, dStep: Int, dPitch: Int): 
 private fun PianoRoll(
     vm: SloopViewModel, state: DeviceState, fitTick: Int, selected: Int,
     onSelect: (Int) -> Unit, selectMode: Boolean, noteSel: Set<Int>, onNoteSel: (Set<Int>) -> Unit,
-    carry: Carry?, onCarryDone: () -> Unit, modifier: Modifier,
+    carry: Carry?, onCarryDone: () -> Unit, newLen: androidx.compose.runtime.MutableIntState, modifier: Modifier,
 ) {
     val length = state.patternLength
     val steps = state.steps
@@ -985,7 +988,7 @@ private fun PianoRoll(
     val phase = rememberPlayPhase(vm, state.selectedTrack)   // the predicted playhead, read in the draw pass only
     val liveCh = LiveNotes.channelOf(state)
     var ndrag by remember(state.selectedTrack) { mutableStateOf<NoteDrag?>(null) }
-    var lastLen by remember(state.selectedTrack) { mutableIntStateOf(1) }
+    var lastLen by newLen
     var gdrag by remember(state.selectedTrack, selectMode) { mutableStateOf<GroupDrag?>(null) }
     var gresize by remember(state.selectedTrack, selectMode) { mutableStateOf<GroupResize?>(null) }
     var marquee by remember(state.selectedTrack, selectMode) { mutableStateOf<Marquee?>(null) }
@@ -1254,6 +1257,9 @@ private fun PianoRoll(
                     Offset(x + 1.5f * d, rowY(r) + 2f * d), Size(n.len * cw - 3f * d, rh - 4f * d), radius,
                     style = Stroke(1.5f * d))
                 val handle = (if (isSel) cs.onTertiary else cs.onPrimary).copy(alpha = 0.7f)
+                if ((steps.getOrNull(n.start)?.flags ?: 0) and 1 != 0)      // an accented step: a bright stripe along the top
+                    drawRoundRect(if (isSel) cs.onTertiary else cs.onPrimary, Offset(x + 1.5f * d, rowY(r) + 2f * d),
+                        Size(n.len * cw - 3f * d, (rh * 0.2f).coerceIn(2f * d, 4f * d)), CornerRadius(1.5f * d))
                 drawRoundRect(handle, Offset(x + n.len * cw - 8f * d, rowY(r) + rh * 0.28f),
                     Size(3f * d, rh * 0.44f), CornerRadius(1.5f * d))
                 if (n.len > 1) drawRoundRect(handle,
@@ -1542,6 +1548,34 @@ private fun DrumStepEditor(vm: SloopViewModel, state: DeviceState, index: Int) {
     }
     if ((state.info?.proto ?: 0) >= 7) StepTiming(vm, state, index)
 }
+
+/** The length of a note tapped into the roll: a fraction of a bar, worked out in steps at the track's DIV (as the web editor's roll). */
+@Composable
+private fun NewLengthSelect(state: DeviceState, len: androidx.compose.runtime.MutableIntState) {
+    val divIdx = state.pdesc.indexOfFirst { it?.label == "DIV" }
+    val per = ROLL_DIV_PER_BAR.getOrElse(if (divIdx >= 0) state.paramValue(divIdx) else 2) { 16f }
+    val options = listOf("1/1" to 1f, "1/2" to 1f / 2, "1/4" to 1f / 4, "1/8" to 1f / 8, "1/16" to 1f / 16)
+        .map { (n, f) -> Triple(n, f, kotlin.math.max(1, kotlin.math.round(per * f).toInt())) }
+    var open by remember { mutableStateOf(false) }
+    val current = options.firstOrNull { it.third == len.intValue }?.first ?: "${len.intValue}st"
+    Box {
+        TextButton(onClick = { open = true }, contentPadding = PaddingValues(horizontal = 6.dp),
+            modifier = Modifier.height(32.dp)) { Text("♪ $current", style = MaterialTheme.typography.labelMedium) }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            Text("New note length", Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            options.forEach { (name, _, steps) ->
+                DropdownMenuItem(
+                    text = { Text("$name  ·  $steps ${if (steps == 1) "step" else "steps"}",
+                        color = if (steps == len.intValue) MaterialTheme.colorScheme.primary else Color.Unspecified) },
+                    onClick = { len.intValue = steps; open = false })
+            }
+        }
+    }
+}
+
+/** Steps in a 4/4 bar for each DIV value (params.c N_SDIV). */
+private val ROLL_DIV_PER_BAR = floatArrayOf(4f, 8f, 16f, 32f, 12f, 24f, 2f, 1f, 0.5f)
 
 /** Two octaves from C3 (48). */
 @Composable

@@ -1435,6 +1435,7 @@ class DeviceController(context: Context) {
             Cmd.STEP_CHANGED -> {
                 val sc = Parse.stepChanged(args)
                 scope.launch { runCatching { reloadOneStep(sc.index) } }
+                scheduleResync()
             }
             Cmd.TRACK_CHANGED -> {
                 val tp = Parse.trackParam(args)
@@ -1472,6 +1473,26 @@ class DeviceController(context: Context) {
         loadSteps(info, dump)
         loadStepExtras(info)
         applyFm6Names()
+    }
+
+    private var resyncJob: Job? = null
+
+    /**
+     * Steps pushed one by one while the FM-1 records (its hold keeps moving a note's end, nudges change too) can leave a step
+     * stale if a read lost a race. Once the pushes stop for a moment, the whole track is read again and the roll shows what the
+     * device holds.
+     */
+    private fun scheduleResync() {
+        resyncJob?.cancel()
+        resyncJob = scope.launch {
+            delay(1200)
+            val s = _state.value
+            val info = s.info ?: return@launch
+            val dump = s.dump ?: return@launch
+            if (s.link != Link.READY) return@launch
+            if (synchronized(pendingLock) { edits.isNotEmpty() || sending }) { scheduleResync(); return@launch }
+            runCatching { loadSteps(info, dump); loadStepExtras(info) }
+        }
     }
 
     private suspend fun reloadOneStep(index: Int) {
