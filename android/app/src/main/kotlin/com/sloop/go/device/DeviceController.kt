@@ -100,6 +100,7 @@ class DeviceController(context: Context) {
         data class Parameter(val scope: Int, val id: Int, val value: Int, val track: Int) : UserEdit
         data class Mix(val track: Int, val level: Int, val mute: Boolean) : UserEdit
         data class Synth(val track: Int, val index: Int, val step: Step) : UserEdit
+        data class Transpose(val track: Int, val delta: Int, val before: List<Step>, val after: List<Step>) : UserEdit
         data class Drum(val index: Int, val step: DrumStep) : UserEdit
     }
     private val edits = ArrayDeque<UserEdit>()
@@ -108,6 +109,7 @@ class DeviceController(context: Context) {
     private var sending = false
     private var editGeneration = 0
     private var queuePaused = false
+    @Volatile private var nativeTransposeTrack: Int? = null
     private val maxEdits = 16384
     private val draftLock = Any()
     private val draftSynth = mutableMapOf<Int, List<Step>>()
@@ -919,11 +921,80 @@ class DeviceController(context: Context) {
         editNotes { _, notes -> notes.filter { noteKey(it.pitch, it.start) !in keys }.takeIf { it.size != notes.size } }
     }
 
-    /** Shifts every note of the pattern by [delta] semitones (+-12 = an octave), clamped to 0..127. */
+    /** Shifts the whole pattern by [delta]. On v12 in Live mode, use the firmware's
+     * transpose tool to preserve continuations; older/local edits use the note model. */
     fun transposeNotes(delta: Int) {
+        val s = _state.value
+        if (s.link != Link.READY || s.isDrum || delta == 0) return
+        if ((s.info?.proto ?: 0) >= 12 && s.sequencerMode == SequencerMode.NOW) {
+            transposeOnDevice(s, delta)
+            return
+        }
+        if (s.steps.any { it.hasContinuations() }) {
+            showEditNotice("Use Live mode to transpose this recorded pattern")
+            return
+        }
         editNotes { _, notes ->
             notes.map { it.copy(pitch = (it.pitch + delta).coerceIn(0, 127)) }
         }
+    }
+
+    /** Live selection transpose preserves the raw step structure. Store continues
+     * to use placeNotes. Return new selection keys only after accepting the edit. */
+    fun transposeSelectedNotes(keys: Set<Int>, delta: Int): Set<Int>? {
+        val s = _state.value
+        if (s.link != Link.READY || s.isDrum || s.sequencerMode != SequencerMode.NOW || delta == 0) return null
+        val selected = decodeNotes(s.steps, s.patternLength).filter { noteKey(it.pitch, it.start) in keys }
+        if (selected.isEmpty()) return null
+        val allStored = decodeNotes(s.steps, s.nstep)
+        val accepted = if ((s.info?.proto ?: 0) >= 12 &&
+            allStored.all { noteKey(it.pitch, it.start) in keys }) {
+            // Selecting every stored note can use the whole-track command, including CONT.
+            transposeOnDevice(s, delta)
+        } else {
+            val after = transposeSelectedSteps(s.steps, s.patternLength, keys, delta)
+            if (after == null) {
+                showEditNotice("Transpose cancelled: note range, overlap or legato conflict")
+                return null
+            }
+            val changed = after.filterIndexed { i, step -> step != s.steps[i] }
+            if (changed.any { it.hasContinuations() || s.steps[it.index].hasContinuations() }) {
+                showEditNotice("FM-1 cannot transpose only these CONT notes; select the whole pattern")
+                return null
+            }
+            changed.isNotEmpty() && applySynthBatch(changed.map { UserEdit.Synth(s.selectedTrack, it.index, it) })
+        }
+        return if (accepted) selected.map { noteKey(it.pitch + delta, it.start) }.toSet() else null
+    }
+
+    private fun transposeOnDevice(s: DeviceState, delta: Int): Boolean {
+        val before = s.steps.map { it.snapshot() }
+        if (before.size != s.nstep || delta !in -12..12) return false
+        val after = transposeRawSteps(before, delta)
+        if (after == null) {
+            showEditNotice("Transpose cancelled: notes would exceed MIDI range 0–127")
+            return false
+        }
+        if (before == after || !enqueueTranspose(UserEdit.Transpose(s.selectedTrack, delta, before, after))) return false
+        history.record(Change.Transpose(s.selectedTrack, delta, before, after))
+        return true
+    }
+
+    private fun enqueueTranspose(edit: UserEdit.Transpose): Boolean {
+        val s = _state.value
+        if (s.sequencerMode != SequencerMode.NOW || (s.info?.proto ?: 0) < 12) {
+            showEditNotice("Switch to Live mode for device transpose")
+            return false
+        }
+        val live = _transport.value
+        if (live?.freeTake == true || live?.recWait == true ||
+            ((live?.recs ?: 0) and (1 shl edit.track)) != 0) {
+            showEditNotice("Finish recording before transposing")
+            return false
+        }
+        if (!enqueueBatch(listOf(edit))) return false
+        _state.update { it.withQueuedEdits() }
+        return true
     }
 
     /** Moves the note that starts at [fromIndex] with pitch [fromNote]; its length is kept. */
@@ -1052,10 +1123,22 @@ class DeviceController(context: Context) {
                 (e.track == s.selectedTrack && s.steps.getOrNull(e.index)?.hasContinuations() == true)
         }
         if (losesContinuation) {
-            _state.update { it.copy(queueError =
-                "Edit not sent: STEP_SET cannot preserve this step's held notes. Edit this step on FM-1.") }
+            showEditNotice("Held notes: edit on FM-1")
         }
         return !losesContinuation
+    }
+
+    private fun showEditNotice(message: String) {
+        val notice = EditNotice(message)
+        _state.update { it.copy(editNotice = notice) }
+        scope.launch {
+            delay(6000)
+            _state.update { if (it.editNotice === notice) it.copy(editNotice = null) else it }
+        }
+    }
+
+    fun dismissEditNotice() {
+        _state.update { it.copy(editNotice = null) }
     }
 
     private fun enqueueBatch(batch: List<UserEdit>): Boolean {
@@ -1309,7 +1392,7 @@ class DeviceController(context: Context) {
 
     fun discardDraftsAndSwitch() {
         clearDrafts()
-        history.drop { it is Change.Synth || it is Change.Drum }
+        history.drop { it is Change.Synth || it is Change.Drum || it is Change.Transpose }
         _state.update { it.copy(sequencerMode = SequencerMode.NOW, draftTracks = emptySet(),
             link = Link.LOADING, status = "Refreshing pattern…",
             steps = emptyList(), drumSteps = emptyList()) }
@@ -1387,6 +1470,10 @@ class DeviceController(context: Context) {
             is Change.Param -> setParam(c.scope, c.id, if (forward) c.after else c.before, record = false)
             is Change.Mix -> (if (forward) c.after else c.before).let { setTrackMix(c.tr, it.first, it.second, record = false) }
             is Change.Synth -> synth.add(UserEdit.Synth(c.tr, c.index, (if (forward) c.after else c.before).snapshot()))
+            is Change.Transpose -> if (!enqueueTranspose(UserEdit.Transpose(c.tr,
+                if (forward) c.delta else -c.delta,
+                if (forward) c.before else c.after,
+                if (forward) c.after else c.before))) return false
             is Change.Drum -> setDrumStep(c.index, (if (forward) c.after else c.before).snapshot(), record = false)
             is Change.Micro -> setStepMicro(c.step, if (forward) c.after else c.before, record = false)
             is Change.Fill -> setStepFill(c.step, if (forward) c.after else c.before, record = false)
@@ -1415,14 +1502,75 @@ class DeviceController(context: Context) {
                 }
                 if (!current) continue
                 _state.update { it.copy(queuedEdits = synchronized(pendingLock) { edits.size },
-                    queueError = if (result.isFailure) "MIDI reply missing — tap Retry in Device" else null) }
+                    queueError = if (result.isFailure) {
+                        if (next.first is UserEdit.Transpose)
+                            "Transpose paused: ${result.exceptionOrNull()?.message}. Retry in Device checks the pattern first."
+                        else "MIDI reply missing — tap Retry in Device"
+                    } else null) }
                 if (result.isFailure) break
             }
         }
     }
 
+    /** LIVE pattern tool preserves raw step flags. The firmware supports one
+     * semitone per command, so an octave is twelve serialized operations.
+     * Never retry a relative command blindly: first read and reconcile progress. */
+    private suspend fun sendTranspose(edit: UserEdit.Transpose) {
+        val connection = conn ?: throw IOException("not connected")
+        val info = _state.value.info ?: throw IOException("device info unavailable")
+        fun checkConnection() {
+            check(conn === connection) { "FM-1 disconnected" }
+        }
+        fun checkRecording(live: Live) {
+            check(!live.freeTake && !live.recWait && (live.recs and (1 shl edit.track)) == 0) {
+                "finish recording first"
+            }
+        }
+        suspend fun readSteps(): List<Step> {
+            val steps = ArrayList<Step>(info.nstep)
+            for (i in 0 until info.nstep) {
+                checkConnection()
+                val reply = Parse.trackStep(request(Requests.trackStepGet(edit.track, i)))
+                check(reply.track == edit.track && reply.step.index == i) { "unexpected step reply" }
+                steps.add(reply.step)
+            }
+            return steps
+        }
+        resyncJob?.cancel(); resyncJob = null
+        nativeTransposeTrack = edit.track
+        try {
+            checkConnection()
+            val live = Parse.live(request(Requests.live(0), quiet = true))
+            checkRecording(live)
+            applyLive(live)
+            val actual = readSteps()
+            val done = rawTransposeProgress(edit.before, actual, edit.delta)
+                ?: throw IOException("pattern changed on FM-1; reconnect to discard this queued transpose")
+            for (i in done until kotlin.math.abs(edit.delta)) {
+                checkConnection()
+                markSelfReload()
+                val reply = Parse.live(request(Requests.liveTransposeStep(edit.track, edit.delta > 0),
+                    retries = 0, quiet = true))
+                applyLive(reply)
+                checkRecording(reply)
+            }
+            val after = readSteps()
+            check(after == edit.after) { "pattern changed during transpose" }
+            _state.update { s ->
+                if (conn !== connection || s.selectedTrack != edit.track) s
+                else s.copy(steps = after).withQueuedEdits().withDraft()
+            }
+        } finally {
+            // Ignore the delayed RELOAD caused by our own commands. The steps above
+            // are already refreshed, and app undo must keep this as one action.
+            if (conn === connection) markSelfReload()
+            nativeTransposeTrack = null
+        }
+    }
+
     private suspend fun sendEdit(edit: UserEdit) {
         when (edit) {
+            is UserEdit.Transpose -> sendTranspose(edit)
             is UserEdit.Parameter -> {
                 val info = _state.value.info
                 val reply = if (edit.scope == 0 && (info?.proto ?: 0) >= 4)
@@ -1484,6 +1632,8 @@ class DeviceController(context: Context) {
                 is UserEdit.Mix -> current.withTrackMix(edit.track, edit.level, edit.mute)
                 is UserEdit.Synth -> if (edit.track == current.selectedTrack && edit.index in current.steps.indices)
                     current.copy(steps = current.steps.toMutableList().also { it[edit.index] = edit.step }) else current
+                is UserEdit.Transpose -> if (edit.track == current.selectedTrack)
+                    current.copy(steps = edit.after) else current
                 is UserEdit.Drum -> if (current.drumGrid && edit.index in current.drumSteps.indices)
                     current.copy(drumSteps = current.drumSteps.toMutableList().also { it[edit.index] = edit.step }) else current
             }
@@ -1541,6 +1691,7 @@ class DeviceController(context: Context) {
                 _state.update { s -> s.withParam(pv.scope, pv.id, pv.value) }
             }
             Cmd.RELOAD -> {
+                if (nativeTransposeTrack != null) return
                 if (System.currentTimeMillis() < selfReloadUntil) return
                 resyncJob?.cancel(); resyncJob = null
                 history.dropTrack(_state.value.selectedTrack)
@@ -1548,6 +1699,7 @@ class DeviceController(context: Context) {
             }
             Cmd.STEP_CHANGED -> {
                 val sc = Parse.stepChanged(args)
+                if (nativeTransposeTrack == sc.track) return
                 if (sc.track != _state.value.selectedTrack) return
                 scope.launch { runCatching { reloadOneStep(sc.index, sc.track) } }
                 scheduleResync()

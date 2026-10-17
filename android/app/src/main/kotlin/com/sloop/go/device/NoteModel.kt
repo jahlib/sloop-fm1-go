@@ -127,6 +127,49 @@ private fun contPitches(st: Step): Set<Int> =
 
 fun Step.hasContinuations(): Boolean = time == StepTime.NOTE && flags and CONT_ALL != 0
 
+/** The firmware's pattern transpose changes only the occupied note slots, across
+ * all stored steps. Refuse clipping so the inverse operation remains exact. */
+fun transposeRawSteps(steps: List<Step>, delta: Int): List<Step>? {
+    if (steps.any { s -> s.notes.take(s.n.coerceIn(0, 4)).any { it + delta !in 0..127 } }) return null
+    return steps.map { s ->
+        s.copy(notes = s.notes.copyOf().also { notes ->
+            for (i in 0 until s.n.coerceIn(0, minOf(4, notes.size))) notes[i] += delta
+        })
+    }
+}
+
+/** Reconcile an interrupted series of one-semitone device commands before retrying.
+ * A lost acknowledgement must not cause the same semitone to be sent twice. */
+fun rawTransposeProgress(before: List<Step>, actual: List<Step>, delta: Int): Int? =
+    (0..kotlin.math.abs(delta)).firstOrNull { done ->
+        transposeRawSteps(before, if (delta < 0) -done else done) == actual
+    }
+
+/** Shift selected note identities in their existing slots, without rebuilding
+ * NOTE/TIE/CONT chains or reordering the per-slot dynamics. Null means clipping,
+ * a pitch collision, or a changed legato boundary would alter other notes. */
+fun transposeSelectedSteps(steps: List<Step>, length: Int, keys: Set<Int>, delta: Int): List<Step>? {
+    val notes = decodeNotes(steps, length)
+    val selected = notes.filter { noteKey(it.pitch, it.start) in keys }
+    if (selected.isEmpty()) return steps
+    if (selected.any { it.pitch + delta !in 0..127 }) return null
+    val desired = notes.map { if (it in selected) it.copy(pitch = it.pitch + delta) else it }
+    for ((i, n) in desired.withIndex()) {
+        if (desired.drop(i + 1).any { it.pitch == n.pitch && it.start <= n.end && n.start <= it.end }) return null
+    }
+    val after = steps.mapIndexed { i, s ->
+        if (i >= length || s.time != StepTime.NOTE) s else {
+            val pitches = s.notes.copyOf()
+            for (slot in 0 until s.n.coerceIn(0, minOf(4, pitches.size))) {
+                if (selected.any { it.pitch == pitches[slot] && i in it.start..it.end })
+                    pitches[slot] += delta
+            }
+            if (pitches.contentEquals(s.notes)) s else s.copy(notes = pitches)
+        }
+    }
+    return after.takeIf { decodeNotes(it, length).toSet() == desired.toSet() }
+}
+
 fun decodeNotes(steps: List<Step>, length: Int): List<PNote> {
     val out = ArrayList<PNote>()
     val open = HashMap<Int, Int>()

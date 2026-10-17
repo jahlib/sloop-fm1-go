@@ -26,6 +26,11 @@ sealed interface Change {
         override val track get() = tr
     }
 
+    /** A whole-pattern transpose performed by LIVE, retaining TIE and SF_CONT. */
+    data class Transpose(val tr: Int, val delta: Int, val before: List<Step>, val after: List<Step>) : Change {
+        override val track get() = tr
+    }
+
     data class Drum(val tr: Int, val index: Int, val before: DrumStep, val after: DrumStep) : Change {
         override val track get() = tr
     }

@@ -98,6 +98,7 @@ import com.sloop.go.device.DeviceState
 import com.sloop.go.device.Link
 import com.sloop.go.device.LiveNotes
 import com.sloop.go.device.PNote
+import com.sloop.go.device.CONT0
 import com.sloop.go.device.decodeNotes
 import com.sloop.go.device.noteKey
 import com.sloop.go.device.resizeDeltaBounds
@@ -168,13 +169,17 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
             selectMode = selectMode, onSelectMode = { selectMode = it }, selCount = noteSel.size,
             onTranspose = { d ->
                 if (selectMode && noteSel.isNotEmpty()) {
-                    val picked = decodeNotes(state.steps, state.patternLength)
-                        .filter { noteKey(it.pitch, it.start) in noteSel }
-                    vm.controller.placeNotes(noteSel, 0, d, copy = false)
-                    val dp = clampShift(picked, state.patternLength, 0, d).second
-                    val after = decodeNotes(vm.controller.state.value.steps, state.patternLength)
-                        .map { noteKey(it.pitch, it.start) }.toSet()
-                    noteSel = picked.map { noteKey(it.pitch + dp, it.start) }.filter { it in after }.toSet()
+                    if (state.sequencerMode == SequencerMode.NOW) {
+                        vm.controller.transposeSelectedNotes(noteSel, d)?.let { noteSel = it }
+                    } else {
+                        val picked = decodeNotes(state.steps, state.patternLength)
+                            .filter { noteKey(it.pitch, it.start) in noteSel }
+                        vm.controller.placeNotes(noteSel, 0, d, copy = false)
+                        val dp = clampShift(picked, state.patternLength, 0, d).second
+                        val after = decodeNotes(vm.controller.state.value.steps, state.patternLength)
+                            .map { noteKey(it.pitch, it.start) }.toSet()
+                        noteSel = picked.map { noteKey(it.pitch + dp, it.start) }.filter { it in after }.toSet()
+                    }
                 } else vm.controller.transposeNotes(d)
             },
             onDeleteSel = {
@@ -305,11 +310,15 @@ private fun ControlPanel(
         if (late && state.draftTracks.isNotEmpty()) add("drafts ${state.draftTracks.sorted().joinToString(",") { "${it + 1}" }}")
         add("queue ${state.queuedEdits}")
     }
-    Text(state.queueError ?: parts.joinToString(" · "),
+    val notice = state.editNotice.takeIf { state.queueError == null }
+    Text(state.queueError ?: notice?.let { "${it.message}  ×" } ?: parts.joinToString(" · "),
         Modifier.align(Alignment.CenterEnd).widthIn(max = maxWidth)
-            .background(MaterialTheme.colorScheme.surface).padding(start = 8.dp, end = 16.dp)
+            .background(MaterialTheme.colorScheme.surface)
+            .clickable(enabled = notice != null, onClickLabel = "Dismiss notice") { vm.controller.dismissEditNotice() }
+            .padding(start = 8.dp, end = 16.dp)
             .onSizeChanged { statusPx = it.width },
         color = if (state.queueError != null) MaterialTheme.colorScheme.error
+            else if (notice != null) MaterialTheme.colorScheme.tertiary
             else MaterialTheme.colorScheme.onSurfaceVariant,
         style = MaterialTheme.typography.labelSmall, maxLines = 1,
         overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End)
@@ -1262,8 +1271,41 @@ private fun PianoRoll(
                 val x = colX(n.start)
                 val isSel = n in picked || marquee?.hits(n) == true
                 val body = if (isSel) cs.tertiary else cs.primary
-                drawRoundRect(if (dimmed && n in picked) body.copy(alpha = 0.3f) else body,
-                    Offset(x + 1.5f * d, rowY(r) + 2f * d), Size(n.len * cw - 3f * d, rh - 4f * d), radius)
+                val opacity = if (dimmed && n in picked) 0.3f else 1f
+                // Show the device's actual step types inside the decoded note.
+                // TIE holds the previous chord; SF_CONT is a per-pitch continuation
+                // on a NOTE step. Neither marker is inferred from the drawn length.
+                for (c in max(n.start, c0)..min(n.end, c1)) {
+                    val st = steps.getOrNull(c)
+                    val slot = st?.notes?.take(st.n.coerceIn(0, 4))?.indexOf(n.pitch) ?: -1
+                    val continuation = st?.time == StepTime.NOTE && slot >= 0 &&
+                        ((st.flags and (CONT0 shl slot)) != 0)
+                    val label = when {
+                        st?.time == StepTime.TIE -> "TIE"
+                        continuation -> "CONT"
+                        else -> null
+                    }
+                    val left = colX(c) + 1.5f * d
+                    val top = rowY(r) + 2f * d
+                    val cellSize = Size((cw - 3f * d).coerceAtLeast(d), rh - 4f * d)
+                    drawRoundRect(body.copy(alpha = opacity * if (label == null) 1f else 0.22f),
+                        Offset(left, top), cellSize, radius)
+                    if (label != null) {
+                        drawRoundRect(body.copy(alpha = opacity * 0.75f), Offset(left, top), cellSize, radius,
+                            style = Stroke(d))
+                        if (cw >= (if (label == "TIE") 30f else 38f) * d && rh >= 18f * d) {
+                            with(painter) {
+                                text(label, colX(c) + cw / 2, rowY(r) + rh / 2,
+                                    body.copy(alpha = opacity), 9f * d, Paint.Align.CENTER)
+                            }
+                        } else {
+                            // At fit-to-pattern zoom, a short link remains legible.
+                            drawLine(body.copy(alpha = opacity),
+                                Offset(colX(c) + cw * 0.3f, rowY(r) + rh / 2),
+                                Offset(colX(c) + cw * 0.7f, rowY(r) + rh / 2), 1.5f * d)
+                        }
+                    }
+                }
                 if (isSel) drawRoundRect(cs.onTertiary.copy(alpha = 0.9f),
                     Offset(x + 1.5f * d, rowY(r) + 2f * d), Size(n.len * cw - 3f * d, rh - 4f * d), radius,
                     style = Stroke(1.5f * d))
@@ -1398,7 +1440,8 @@ private fun StepEditor(
 
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val isNote = step?.time == StepTime.NOTE && (step?.n ?: 0) > 0
-                FilterChip(selected = step?.time == StepTime.REST || step?.n == 0,
+                FilterChip(selected = step?.time == StepTime.REST ||
+                    (step?.time == StepTime.NOTE && step.n == 0),
                     onClick = {
                         vm.controller.setNoteLength(index, 1)
                         vm.controller.setStep(index, rest(vm.controller.state.value.steps.getOrNull(index), index))
@@ -1413,6 +1456,20 @@ private fun StepEditor(
                     onClick = { vm.controller.state.value.steps.getOrNull(index)?.let {
                         vm.controller.setStep(index, it.copy(flags = it.flags xor 2)) } },
                     label = { Text("Slide") })
+            }
+
+            if (step?.time == StepTime.TIE) {
+                Text("TIE · holds the previous step's notes without a new attack",
+                    Modifier.padding(top = 6.dp), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else if (step?.time == StepTime.NOTE) {
+                val continuing = step.notes.take(step.n.coerceIn(0, 4)).filterIndexed { k, _ ->
+                    step.flags and (CONT0 shl k) != 0
+                }
+                if (continuing.isNotEmpty()) Text(
+                    "CONT · continues: ${continuing.joinToString { noteName(it) }}",
+                    Modifier.padding(top = 6.dp), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Text("Note", Modifier.padding(top = 14.dp, bottom = 6.dp),

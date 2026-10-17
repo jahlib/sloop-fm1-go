@@ -5,6 +5,7 @@ package com.sloop.go.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -57,6 +58,13 @@ fun ConnectScreen(vm: SloopViewModel, state: DeviceState) {
                         Text("Retry ${state.queuedEdits} queued edits")
                     }
                 }
+            }
+        }
+        state.editNotice?.let { notice ->
+            item {
+                Text("${notice.message}  ×",
+                    Modifier.padding(horizontal = 16.dp).clickable { vm.controller.dismissEditNotice() },
+                    color = MaterialTheme.colorScheme.tertiary)
             }
         }
 

@@ -16,6 +16,9 @@ import com.sloop.go.proto.Tracks
 enum class Link { DISCONNECTED, CONNECTING, LOADING, READY }
 enum class SequencerMode { NOW, LATE }
 
+/** A separate instance per attempt so an old timer cannot dismiss a newer notice. */
+class EditNotice(val message: String)
+
 /** Immutable snapshot of everything the UI renders. */
 data class DeviceState(
     val link: Link = Link.DISCONNECTED,
@@ -40,6 +43,7 @@ data class DeviceState(
     val queuedEdits: Int = 0,
     val playing: Boolean = false,
     val queueError: String? = null,
+    val editNotice: EditNotice? = null,
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
 ) {

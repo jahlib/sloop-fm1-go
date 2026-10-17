@@ -18,6 +18,8 @@ object Requests {
     /** v12 LIVE: an op and its arguments (the firmware reads nothing shorter than 2 bytes); the reply is the live state. */
     fun live(op: Int, vararg args: Int) = Req(Cmd.LIVE, (intArrayOf(op) + args).let { if (it.size < 2) it + 0 else it })
     fun livePlay(play: Boolean) = live(1, if (play) 1 else 0)
+    /** Pattern tool 2 transposes the entire track by exactly one semitone. */
+    fun liveTransposeStep(track: Int, up: Boolean) = live(8, track, 2, if (up) 1 else 0)
     fun liveDrumSound(lane: Int, tune: Int, decay: Int) = live(12, lane and 15, (tune + 8).coerceIn(0, 15), (decay + 4).coerceIn(0, 7))
     fun get(scope: Int, id: Int) = Req(Cmd.GET, ia(scope, id))
     fun set(scope: Int, id: Int, v: Int) = Req(Cmd.SET, intArrayOf(scope, id) + v14enc(v))
