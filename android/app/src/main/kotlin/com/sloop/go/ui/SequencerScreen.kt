@@ -929,9 +929,27 @@ private fun rememberPlayPhase(vm: SloopViewModel, track: Int): androidx.compose.
     val ph = remember { mutableFloatStateOf(-1f) }
     LaunchedEffect(track) {
         val clock = vm.controller.clock
+        var shown = -1.0
+        var prev = 0L
         while (true) {
-            if (clock.playing) androidx.compose.runtime.withFrameNanos { ph.floatValue = clock.position(track, System.nanoTime() / 1e9) }
-            else { ph.floatValue = -1f; kotlinx.coroutines.delay(150) }
+            if (!clock.playing) { shown = -1.0; ph.floatValue = -1f; kotlinx.coroutines.delay(150); continue }
+            androidx.compose.runtime.withFrameNanos { frame ->
+                val dt = if (prev == 0L) 0.0 else ((frame - prev) / 1e9).coerceIn(0.0, 0.1)
+                prev = frame
+                val target = clock.position(track, System.nanoTime() / 1e9).toDouble()
+                val len = clock.length(track).toDouble()
+                if (target < 0 || len <= 0) { shown = -1.0; ph.floatValue = target.toFloat(); return@withFrameNanos }
+                var err = target - shown
+                err -= len * Math.round(err / len)
+                if (shown < 0 || Math.abs(err) > 1.5) shown = target
+                else {
+                    // Run at the fitted speed and fold the error in over ~150 ms: a late sync speeds the
+                    // head up a little, an early one slows it down; it never steps or runs backward.
+                    val advance = (clock.speed(track) * dt + err * 6.0 * dt).coerceAtLeast(0.0)
+                    shown = (shown + advance) % len
+                }
+                ph.floatValue = shown.toFloat()
+            }
         }
     }
     return ph

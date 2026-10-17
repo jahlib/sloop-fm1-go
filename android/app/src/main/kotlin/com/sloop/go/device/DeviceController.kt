@@ -1092,11 +1092,15 @@ class DeviceController(context: Context) {
         return if (len == n.len) null else n.copy(len = len)
     }
 
-    private fun applySynthBatch(batch: List<UserEdit.Synth>, record: Boolean = true): Boolean {
+    /** STEP_SET cannot carry SF_CONT (SLOOP 2.7), so a written step never holds it: the local steps
+     * then match what the device keeps, and the note model's SLIDE legato carries the lengths. */
+    private fun applySynthBatch(requested: List<UserEdit.Synth>, record: Boolean = true): Boolean {
+        val batch = requested.map { e ->
+            if (e.step.hasContinuations()) e.copy(step = e.step.copy(flags = e.step.flags and CONT_ALL.inv())) else e
+        }
         val s = _state.value
         if (s.link != Link.READY || batch.isEmpty() ||
             batch.any { it.track != s.selectedTrack || it.index !in s.steps.indices }) return false
-        if (!canWriteSynthSteps(batch)) return false
         if (s.sequencerMode == SequencerMode.NOW && !enqueueBatch(batch)) return false
         if (record) history.transaction {
             batch.forEach { e ->
@@ -1114,20 +1118,6 @@ class DeviceController(context: Context) {
         return true
     }
 
-    /** STEP_SET on SLOOP 2.7 discards SF_CONT. Rewriting these steps changes their
-     * playback, even if the pitches stay the same. Do not silently substitute SLIDE. */
-    private fun canWriteSynthSteps(batch: List<UserEdit>): Boolean {
-        val s = _state.value
-        val losesContinuation = batch.filterIsInstance<UserEdit.Synth>().any { e ->
-            e.step.hasContinuations() ||
-                (e.track == s.selectedTrack && s.steps.getOrNull(e.index)?.hasContinuations() == true)
-        }
-        if (losesContinuation) {
-            showEditNotice("Held notes: edit on FM-1")
-        }
-        return !losesContinuation
-    }
-
     private fun showEditNotice(message: String) {
         val notice = EditNotice(message)
         _state.update { it.copy(editNotice = notice) }
@@ -1143,7 +1133,6 @@ class DeviceController(context: Context) {
 
     private fun enqueueBatch(batch: List<UserEdit>): Boolean {
         if (_state.value.link != Link.READY) return false
-        if (!canWriteSynthSteps(batch)) return false
         val size = synchronized(pendingLock) {
             if (edits.size + batch.size > maxEdits) -1
             else { batch.forEach { edits.addLast(it) }; edits.size }
@@ -1408,7 +1397,6 @@ class DeviceController(context: Context) {
 
     private fun enqueue(edit: UserEdit, continuous: Boolean = false): Boolean {
         if (_state.value.link != Link.READY) return false
-        if (!canWriteSynthSteps(listOf(edit))) return false
         val size = synchronized(pendingLock) {
             if (continuous) {
                 for (i in edits.lastIndex downTo if (sending) 1 else 0) {
@@ -1462,9 +1450,6 @@ class DeviceController(context: Context) {
 
     private suspend fun applyEntry(e: HistoryEntry, forward: Boolean): Boolean {
         e.track?.let { if (!selectTrackAndWait(it)) return false }
-        if (!canWriteSynthSteps(e.changes.filterIsInstance<Change.Synth>().map {
-            UserEdit.Synth(it.tr, it.index, if (forward) it.after else it.before)
-        })) return false
         val synth = ArrayList<UserEdit.Synth>()
         for (c in if (forward) e.changes else e.changes.asReversed()) when (c) {
             is Change.Param -> setParam(c.scope, c.id, if (forward) c.after else c.before, record = false)
