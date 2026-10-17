@@ -151,6 +151,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     val kind = if (state.drumGrid) ClipKind.DRUM else ClipKind.PIANO
     val prefs = LocalContext.current.getSharedPreferences("sequencer", 0)
     var chin by remember { mutableStateOf(prefs.getBoolean("chin", false)) }   // the FX strip on the right edge (T1..T3)
+    var showTies by remember { mutableStateOf(prefs.getBoolean("showTies", false)) }
     val newLen = remember(state.selectedTrack) { mutableIntStateOf(1) }   // the length a tapped-in note gets, in steps
 
     // Refit once the loaded steps of another track actually arrive: a track switch replaces the
@@ -166,6 +167,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
             onSave = { browser = BrowserMode.SAVE }, onLoad = { browser = BrowserMode.LOAD },
             onOptions = { options = true }, optionsLabel = "Step ${selected + 1}", newLen = if (state.drumGrid) null else newLen,
             chin = chin, onChin = { chin = it; prefs.edit().putBoolean("chin", it).apply() },
+            showTies = showTies, onShowTies = { showTies = it; prefs.edit().putBoolean("showTies", it).apply() },
             selectMode = selectMode, onSelectMode = { selectMode = it }, selCount = noteSel.size,
             onTranspose = { d ->
                 if (selectMode && noteSel.isNotEmpty()) {
@@ -190,7 +192,7 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
             selected, { sel = it }, Modifier.weight(1f).fillMaxWidth())
         else Row(Modifier.weight(1f).fillMaxWidth()) {
             PianoRoll(vm, state, fitTick, selected, { sel = it }, selectMode, noteSel, { noteSel = it },
-                carry, { carry = null; browser = null }, newLen, Modifier.weight(1f).fillMaxHeight())
+                carry, { carry = null; browser = null }, newLen, showTies, Modifier.weight(1f).fillMaxHeight())
             if (chin) FxChin(vm, state)
         }
     }
@@ -232,6 +234,7 @@ private fun ControlPanel(
     onSave: () -> Unit, onLoad: () -> Unit,
     onClear: () -> Unit, onFit: () -> Unit, onOptions: (() -> Unit)?, optionsLabel: String,
     newLen: androidx.compose.runtime.MutableIntState?, chin: Boolean, onChin: (Boolean) -> Unit,
+    showTies: Boolean, onShowTies: (Boolean) -> Unit,
     selectMode: Boolean, onSelectMode: (Boolean) -> Unit, selCount: Int, onDeleteSel: () -> Unit,
     onTranspose: (Int) -> Unit,
 ) {
@@ -293,6 +296,9 @@ private fun ControlPanel(
         }
         if (newLen != null) {
             NewLengthSelect(state, newLen)
+            FilledTonalIconToggleButton(checked = showTies, onCheckedChange = onShowTies, modifier = Modifier.size(32.dp)) {
+                Text("TIE", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
             FilledTonalIconToggleButton(checked = chin, onCheckedChange = onChin, modifier = Modifier.size(32.dp)) {
                 Text("FX", fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
@@ -994,7 +1000,7 @@ private fun clampShift(sel: List<PNote>, length: Int, dStep: Int, dPitch: Int): 
 private fun PianoRoll(
     vm: SloopViewModel, state: DeviceState, fitTick: Int, selected: Int,
     onSelect: (Int) -> Unit, selectMode: Boolean, noteSel: Set<Int>, onNoteSel: (Set<Int>) -> Unit,
-    carry: Carry?, onCarryDone: () -> Unit, newLen: androidx.compose.runtime.MutableIntState, modifier: Modifier,
+    carry: Carry?, onCarryDone: () -> Unit, newLen: androidx.compose.runtime.MutableIntState, showTies: Boolean, modifier: Modifier,
 ) {
     val length = state.patternLength
     val steps = state.steps
@@ -1272,47 +1278,55 @@ private fun PianoRoll(
                 val isSel = n in picked || marquee?.hits(n) == true
                 val body = if (isSel) cs.tertiary else cs.primary
                 val opacity = if (dimmed && n in picked) 0.3f else 1f
-                // Show the device's actual step types inside the decoded note.
-                // TIE holds the previous chord; SF_CONT is a per-pitch continuation
-                // on a NOTE step. Neither marker is inferred from the drawn length.
-                for (c in max(n.start, c0)..min(n.end, c1)) {
+                val noteLeft = x + 1.5f * d
+                val noteWidth = (n.len * cw - 3f * d).coerceAtLeast(d)
+                val noteHeight = (rh - 4f * d).coerceAtLeast(d)
+                val noteTop = rowY(r) + (rh - noteHeight) / 2
+                val noteSize = Size(noteWidth, noteHeight)
+                drawRoundRect(body.copy(alpha = opacity), Offset(noteLeft, noteTop), noteSize, radius)
+
+                // Keep the note's silhouette continuous. One inner line descends at
+                // the first actual TIE / per-pitch CONT step, then stays low to its end.
+                // Search from the real start, including when it is scrolled offscreen.
+                val heldFrom = if (!showTies) null else (n.start..n.end).firstOrNull { c ->
                     val st = steps.getOrNull(c)
-                    val slot = st?.notes?.take(st.n.coerceIn(0, 4))?.indexOf(n.pitch) ?: -1
-                    val continuation = st?.time == StepTime.NOTE && slot >= 0 &&
-                        ((st.flags and (CONT0 shl slot)) != 0)
-                    val label = when {
-                        st?.time == StepTime.TIE -> "TIE"
-                        continuation -> "CONT"
-                        else -> null
-                    }
-                    val left = colX(c) + 1.5f * d
-                    val top = rowY(r) + 2f * d
-                    val cellSize = Size((cw - 3f * d).coerceAtLeast(d), rh - 4f * d)
-                    drawRoundRect(body.copy(alpha = opacity * if (label == null) 1f else 0.22f),
-                        Offset(left, top), cellSize, radius)
-                    if (label != null) {
-                        drawRoundRect(body.copy(alpha = opacity * 0.75f), Offset(left, top), cellSize, radius,
-                            style = Stroke(d))
-                        if (cw >= (if (label == "TIE") 30f else 38f) * d && rh >= 18f * d) {
-                            with(painter) {
-                                text(label, colX(c) + cw / 2, rowY(r) + rh / 2,
-                                    body.copy(alpha = opacity), 9f * d, Paint.Align.CENTER)
-                            }
+                    st?.time == StepTime.TIE || (st?.time == StepTime.NOTE &&
+                        st.notes.take(st.n.coerceIn(0, 4)).withIndex().any { (slot, pitch) ->
+                            pitch == n.pitch && (st.flags and (CONT0 shl slot)) != 0
+                        })
+                }
+                if (heldFrom != null && noteWidth >= 8f * d && noteHeight >= 5f * d) {
+                    val inset = min(3f * d, noteWidth * 0.12f)
+                    val left = noteLeft + inset
+                    val right = noteLeft + noteWidth - inset
+                    val upper = noteTop + noteHeight * 0.28f
+                    val lower = noteTop + noteHeight * 0.8f
+                    val transition = colX(heldFrom).coerceIn(left, right)
+                    val ramp = min(6f * d, cw * 0.35f)
+                    val from = (transition - ramp / 2).coerceAtLeast(left)
+                    val to = (transition + ramp / 2).coerceAtMost(right)
+                    val path = androidx.compose.ui.graphics.Path().apply {
+                        if (heldFrom == n.start) {
+                            moveTo(left, lower)
                         } else {
-                            // At fit-to-pattern zoom, a short link remains legible.
-                            drawLine(body.copy(alpha = opacity),
-                                Offset(colX(c) + cw * 0.3f, rowY(r) + rh / 2),
-                                Offset(colX(c) + cw * 0.7f, rowY(r) + rh / 2), 1.5f * d)
+                            moveTo(left, upper)
+                            lineTo(from, upper)
+                            cubicTo(transition, upper, transition, lower, to, lower)
                         }
+                        lineTo(right, lower)
                     }
+                    drawPath(path, (if (isSel) cs.onTertiary else cs.onPrimary).copy(alpha = 0.65f * opacity),
+                        style = Stroke(min(1.5f * d, noteHeight * 0.15f),
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                            join = androidx.compose.ui.graphics.StrokeJoin.Round))
                 }
                 if (isSel) drawRoundRect(cs.onTertiary.copy(alpha = 0.9f),
-                    Offset(x + 1.5f * d, rowY(r) + 2f * d), Size(n.len * cw - 3f * d, rh - 4f * d), radius,
+                    Offset(noteLeft, noteTop), noteSize, radius,
                     style = Stroke(1.5f * d))
                 val handle = (if (isSel) cs.onTertiary else cs.onPrimary).copy(alpha = 0.7f)
                 if ((steps.getOrNull(n.start)?.flags ?: 0) and 1 != 0)      // an accented step: a bright stripe along the top
-                    drawRoundRect(if (isSel) cs.onTertiary else cs.onPrimary, Offset(x + 1.5f * d, rowY(r) + 2f * d),
-                        Size(n.len * cw - 3f * d, (rh * 0.2f).coerceIn(2f * d, 4f * d)), CornerRadius(1.5f * d))
+                    drawRoundRect(if (isSel) cs.onTertiary else cs.onPrimary, Offset(noteLeft, noteTop),
+                        Size(noteWidth, min(noteHeight, (rh * 0.2f).coerceIn(2f * d, 4f * d))), CornerRadius(1.5f * d))
                 drawRoundRect(handle, Offset(x + n.len * cw - 8f * d, rowY(r) + rh * 0.28f),
                     Size(3f * d, rh * 0.44f), CornerRadius(1.5f * d))
                 if (n.len > 1) drawRoundRect(handle,
