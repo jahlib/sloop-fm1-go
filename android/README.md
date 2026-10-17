@@ -46,7 +46,12 @@ reported and discarded on disconnect. App-process death also loses queued edits 
   tap to add/remove a note, drag the handle at the right end of a note bar to lengthen it
   (via TIE steps), long-press a note and drag to move it, drag empty space to scroll.
   A chord shares one duration, since TIE holds the entire synth track's previous step. Each synth
-  step supports up to four notes. Clear asks for confirmation; per-step accent/slide/tie options,
+  step supports up to four notes. As in the original web editor, a new NOTE inside a TIE tail
+  ends that tail; extending a chord stops before the next NOTE of any pitch. Adding a pitch at
+  an existing NOTE keeps that chord's duration. The roll shows each stored NOTE and its following
+  TIEs, without merging NOTE boundaries through SLIDE or CONT. The TIE toolbar switch adds
+  continuation markers; dragging previews the same chord boundaries that will be sent.
+  Clear asks for confirmation; per-step accent/slide/tie options,
   length +/- controls and keyboard are in the piano-roll's step options. The sequencer shows the
   selected track, engine and preset name; startup uses the original SLOOP icon as an animated splash.
   **Now** queues each sequencer change immediately. **Late** keeps a RAM-only draft for each track;
@@ -101,7 +106,7 @@ cd android
 
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`. Or copy it to the phone and tap it
 (allow "install from unknown sources"). Current `applicationId` is `com.sloop.go`, `versionCode`
-is 44 and `versionName` is 1.7.18. For each major update increment `versionCode` and update
+is 45 and `versionName` is 1.7.19. For each major update increment `versionCode` and update
 `versionName` in `android/app/build.gradle`, and update the APK link in the root `README.md`
 to the new release (`releases/download/<tag>/sloop_go_<version>.apk`); keep the same package
 and signing key to install updates over existing installations with `adb install -r`.

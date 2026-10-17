@@ -83,10 +83,6 @@ class PlayClock {
         return (if (m < 0) m + x.len else m).toFloat()
     }
 
-    /** The fitted speed of [track] in steps per second (0 while unknown) and its pattern length, for display smoothing. */
-    @Synchronized fun speed(track: Int): Double = tr.getOrNull(track)?.takeIf { playing }?.rate ?: 0.0
-    @Synchronized fun length(track: Int): Int = tr.getOrNull(track)?.len ?: 0
-
     private companion object {
         const val N = 10
         const val MIN = 3

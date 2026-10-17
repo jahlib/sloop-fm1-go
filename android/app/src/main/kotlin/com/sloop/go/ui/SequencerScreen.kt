@@ -100,8 +100,12 @@ import com.sloop.go.device.LiveNotes
 import com.sloop.go.device.PNote
 import com.sloop.go.device.CONT0
 import com.sloop.go.device.decodeNotes
+import com.sloop.go.device.encodeNotes
+import com.sloop.go.device.movePianoNotes
 import com.sloop.go.device.noteKey
+import com.sloop.go.device.placePianoNotes
 import com.sloop.go.device.resizeDeltaBounds
+import com.sloop.go.device.resizePianoNotes
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -176,11 +180,12 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                     } else {
                         val picked = decodeNotes(state.steps, state.patternLength)
                             .filter { noteKey(it.pitch, it.start) in noteSel }
-                        vm.controller.placeNotes(noteSel, 0, d, copy = false)
-                        val dp = clampShift(picked, state.patternLength, 0, d).second
-                        val after = decodeNotes(vm.controller.state.value.steps, state.patternLength)
-                            .map { noteKey(it.pitch, it.start) }.toSet()
-                        noteSel = picked.map { noteKey(it.pitch + dp, it.start) }.filter { it in after }.toSet()
+                        if (vm.controller.placeNotes(noteSel, 0, d, copy = false)) {
+                            val dp = clampShift(picked, state.patternLength, 0, d).second
+                            val after = decodeNotes(vm.controller.state.value.steps, state.patternLength)
+                                .map { noteKey(it.pitch, it.start) }.toSet()
+                            noteSel = picked.map { noteKey(it.pitch + dp, it.start) }.filter { it in after }.toSet()
+                        }
                     }
                 } else vm.controller.transposeNotes(d)
             },
@@ -929,27 +934,9 @@ private fun rememberPlayPhase(vm: SloopViewModel, track: Int): androidx.compose.
     val ph = remember { mutableFloatStateOf(-1f) }
     LaunchedEffect(track) {
         val clock = vm.controller.clock
-        var shown = -1.0
-        var prev = 0L
         while (true) {
-            if (!clock.playing) { shown = -1.0; ph.floatValue = -1f; kotlinx.coroutines.delay(150); continue }
-            androidx.compose.runtime.withFrameNanos { frame ->
-                val dt = if (prev == 0L) 0.0 else ((frame - prev) / 1e9).coerceIn(0.0, 0.1)
-                prev = frame
-                val target = clock.position(track, System.nanoTime() / 1e9).toDouble()
-                val len = clock.length(track).toDouble()
-                if (target < 0 || len <= 0) { shown = -1.0; ph.floatValue = target.toFloat(); return@withFrameNanos }
-                var err = target - shown
-                err -= len * Math.round(err / len)
-                if (shown < 0 || Math.abs(err) > 1.5) shown = target
-                else {
-                    // Run at the fitted speed and fold the error in over ~150 ms: a late sync speeds the
-                    // head up a little, an early one slows it down; it never steps or runs backward.
-                    val advance = (clock.speed(track) * dt + err * 6.0 * dt).coerceAtLeast(0.0)
-                    shown = (shown + advance) % len
-                }
-                ph.floatValue = shown.toFloat()
-            }
+            if (clock.playing) androidx.compose.runtime.withFrameNanos { ph.floatValue = clock.position(track, System.nanoTime() / 1e9) }
+            else { ph.floatValue = -1f; kotlinx.coroutines.delay(150) }
         }
     }
     return ph
@@ -1100,7 +1087,7 @@ private fun PianoRoll(
                 val all = decodeNotes(vm.controller.state.value.steps, length)
                 val slack = 8f * vp.d
                 val zone = min(vp.cw * 0.4f, 24f * vp.d)
-                for (x in floatArrayOf(p.x - slack, p.x, p.x + slack)) {
+                for (x in floatArrayOf(p.x, p.x - slack, p.x + slack)) {
                     val i = vp.stepAt(x)
                     val n = all.firstOrNull { it.pitch == note && i in it.start..it.end } ?: continue
                     val left = vp.lw + n.start * vp.cw - vp.sx
@@ -1118,8 +1105,6 @@ private fun PianoRoll(
             fun selOn() = selectMode || live.v.isNotEmpty()
             fun frameAt(p: Offset) = Marquee((p.x - vp.lw + vp.sx) / vp.cw, (p.y - vp.hdr + vp.sy) / vp.rh,
                 (p.x - vp.lw + vp.sx) / vp.cw, (p.y - vp.hdr + vp.sy) / vp.rh)
-            fun ratcheted(n: PNote) =
-                vm.controller.state.value.steps.getOrNull(n.start)?.rat?.let { it != 0 } == true
             override fun tap(p: Offset) {
                 if (p.x < vp.lw || p.y < vp.hdr) {
                     if (p.y < vp.hdr && p.x >= vp.lw) vp.stepAt(p.x).takeIf { it in 0 until length }?.let(onSelect)
@@ -1168,7 +1153,7 @@ private fun PianoRoll(
                     return true
                 }
                 onSelect(h.start)
-                ndrag = NoteDrag(false, h.start, h.note, h.len, h.start, h.start, h.note,
+                ndrag = NoteDrag(false, h.start, h.note, h.len, vp.stepAt(p.x), h.start, h.note,
                     h.start + h.len - 1, h.edge)
                 return true
             }
@@ -1208,8 +1193,10 @@ private fun PianoRoll(
                         ndrag = if (dr.move) dr.copy(
                             toStep = (dr.start + vp.stepAt(p.x) - dr.grabStep).coerceIn(0, length - dr.len),
                             toNote = noteAtRow(p.y).coerceIn(0, TOP_NOTE))
-                        else if (dr.edge > 0) dr.copy(end = vp.stepAt(p.x).coerceIn(dr.start, length - 1))
-                        else dr.copy(toStep = vp.stepAt(p.x).coerceIn(0, dr.start + dr.len - 1))
+                        else if (dr.edge > 0) dr.copy(end = (dr.start + dr.len - 1 + vp.stepAt(p.x) - dr.grabStep)
+                            .coerceIn(dr.start, length - 1))
+                        else dr.copy(toStep = (dr.start + vp.stepAt(p.x) - dr.grabStep)
+                            .coerceIn(0, dr.start + dr.len - 1))
                     }
                 }
             }
@@ -1220,18 +1207,20 @@ private fun PianoRoll(
                         val sel = allNotes().filter { noteKey(it.pitch, it.start) in live.v }
                         val (ds, dp) = clampShift(sel, length, g.dStep, g.dPitch)
                         if (g.copy || ds != 0 || dp != 0) {
-                            vm.controller.placeNotes(live.v, g.dStep, g.dPitch, g.copy)
-                            if (ds != 0 || dp != 0) setSel(sel.map { noteKey(it.pitch + dp, it.start + ds) }.toSet())
+                            if (vm.controller.placeNotes(live.v, g.dStep, g.dPitch, g.copy)) {
+                                val after = allNotes().map { noteKey(it.pitch, it.start) }.toSet()
+                                setSel(sel.map { noteKey(it.pitch + dp, it.start + ds) }.filter { it in after }.toSet())
+                            }
                         }
                     }
                     gresize?.let { g ->
                         val sel = allNotes().filter { noteKey(it.pitch, it.start) in live.v }
                         val others = allNotes().filter { noteKey(it.pitch, it.start) !in live.v }
-                        val (lo, hi) = resizeDeltaBounds(sel, others, length, g.edge, ::ratcheted)
+                        val (lo, hi) = resizeDeltaBounds(sel, others, length, g.edge)
                         val d = if (lo <= hi) g.delta.coerceIn(lo, hi) else 0
                         if (d != 0) {
-                            vm.controller.resizeNotes(live.v, g.edge, g.delta)
-                            if (g.edge < 0) setSel(sel.map { noteKey(it.pitch, it.start + d) }.toSet())
+                            if (vm.controller.resizeNotes(live.v, g.edge, g.delta) && g.edge < 0)
+                                setSel(sel.map { noteKey(it.pitch, it.start + d) }.toSet())
                         }
                     }
                     marquee?.let { m -> setSel(allNotes().filter { m.hits(it) }.map { noteKey(it.pitch, it.start) }.toSet()) }
@@ -1242,9 +1231,11 @@ private fun PianoRoll(
                 drag(p)
                 val fin = ndrag ?: dr
                 ndrag = null
-                lastLen = if (fin.move) fin.len
-                    else if (fin.edge > 0) fin.end - fin.start + 1
-                    else fin.start + fin.len - fin.toStep
+                val expected = fin.preview(allNotes(), length).firstOrNull {
+                    if (fin.move) it.start == fin.toStep && it.pitch == fin.toNote
+                    else it.pitch == fin.note && (if (fin.edge > 0) it.start == fin.start
+                        else it.end == fin.start + fin.len - 1)
+                }
                 if (fin.move) {
                     if (fin.toStep != fin.start || fin.toNote != fin.note)
                         vm.controller.moveNote(fin.start, fin.note, fin.toStep, fin.toNote)
@@ -1253,6 +1244,7 @@ private fun PianoRoll(
                         vm.controller.resizeNote(fin.start, fin.note, fin.end - fin.start + 1)
                 } else if (fin.toStep != fin.start)
                     vm.controller.adjustNoteStart(fin.start, fin.note, fin.toStep - fin.start)
+                if (expected != null && expected in allNotes()) lastLen = expected.len
             }
             override fun cancel() { ndrag = null; gdrag = null; gresize = null; marquee = null }
         }
@@ -1288,14 +1280,33 @@ private fun PianoRoll(
             }
             val all = decodeNotes(steps, length)
             val picked = if (noteSel.isNotEmpty()) all.filter { noteKey(it.pitch, it.start) in noteSel } else emptyList()
-            val dimmed = (gdrag != null && gdrag?.copy == false) || gresize != null
-            for (n in all) {
+            // Preview the actual NOTE + TIE result, including cut tails and the other
+            // pitches of a resized chord. Use the same transformations as the controller.
+            val preview = gdrag?.let { movePianoNotes(all, noteSel, it.dStep, it.dPitch, it.copy, length) }
+                ?: gresize?.let { resizePianoNotes(all, noteSel, it.edge, it.delta, length) }
+                ?: ndrag?.preview(all, length)
+                ?: carry?.let { c ->
+                    carryShift(c)?.let { sh ->
+                        val src = c.clip.notes.filter { it.start < length }
+                            .map { PNote(it.start, minOf(it.len, length - it.start).coerceAtLeast(1),
+                                it.pitch.coerceIn(0, TOP_NOTE)) }
+                        val (ds, dp) = clampShift(src, length, sh.first, sh.second)
+                        placePianoNotes(all, src.map { it.copy(start = it.start + ds, pitch = it.pitch + dp) }, length)
+                    }
+                }
+            val previewWrites = preview?.let { encodeNotes(steps, length, it) }
+            val displaySteps = if (previewWrites == null) steps else steps.toMutableList().also { list ->
+                previewWrites.forEach { list[it.index] = it }
+            }
+            val displayed = if (previewWrites == null) all else decodeNotes(displaySteps, length)
+            for (n in displayed) {
                 val r = TOP_NOTE - n.pitch
                 if (r !in r0..r1 || n.end < c0 || n.start > c1) continue
                 val x = colX(n.start)
-                val isSel = n in picked || marquee?.hits(n) == true
+                val edited = previewWrites != null && n !in all
+                val isSel = n in picked || edited || marquee?.hits(n) == true
                 val body = if (isSel) cs.tertiary else cs.primary
-                val opacity = if (dimmed && n in picked) 0.3f else 1f
+                val opacity = if (edited) 0.8f else 1f
                 val noteLeft = x + 1.5f * d
                 val noteWidth = (n.len * cw - 3f * d).coerceAtLeast(d)
                 val noteHeight = (rh - 4f * d).coerceAtLeast(d)
@@ -1307,7 +1318,7 @@ private fun PianoRoll(
                 // the first actual TIE / per-pitch CONT step, then stays low to its end.
                 // Search from the real start, including when it is scrolled offscreen.
                 val heldFrom = if (!showTies) null else (n.start..n.end).firstOrNull { c ->
-                    val st = steps.getOrNull(c)
+                    val st = displaySteps.getOrNull(c)
                     st?.time == StepTime.TIE || (st?.time == StepTime.NOTE &&
                         st.notes.take(st.n.coerceIn(0, 4)).withIndex().any { (slot, pitch) ->
                             pitch == n.pitch && (st.flags and (CONT0 shl slot)) != 0
@@ -1342,7 +1353,7 @@ private fun PianoRoll(
                     Offset(noteLeft, noteTop), noteSize, radius,
                     style = Stroke(1.5f * d))
                 val handle = (if (isSel) cs.onTertiary else cs.onPrimary).copy(alpha = 0.7f)
-                if ((steps.getOrNull(n.start)?.flags ?: 0) and 1 != 0)      // an accented step: a bright stripe along the top
+                if ((displaySteps.getOrNull(n.start)?.flags ?: 0) and 1 != 0)      // an accented step: a bright stripe along the top
                     drawRoundRect(if (isSel) cs.onTertiary else cs.onPrimary, Offset(noteLeft, noteTop),
                         Size(noteWidth, min(noteHeight, (rh * 0.2f).coerceIn(2f * d, 4f * d))), CornerRadius(1.5f * d))
                 drawRoundRect(handle, Offset(x + n.len * cw - 8f * d, rowY(r) + rh * 0.28f),
@@ -1351,49 +1362,8 @@ private fun PianoRoll(
                     Offset(x + 5f * d, rowY(r) + rh * 0.28f),
                     Size(3f * d, rh * 0.44f), CornerRadius(1.5f * d))
             }
-            gdrag?.let { g ->                            // the carried group (or its clone) where it would land
-                val (ds, dp) = clampShift(picked, length, g.dStep, g.dPitch)
-                for (n in picked) {
-                    val gr = TOP_NOTE - (n.pitch + dp)
-                    drawRoundRect(cs.tertiary.copy(alpha = 0.75f),
-                        Offset(colX(n.start + ds) + 1.5f * d, rowY(gr) + 2f * d),
-                        Size(n.len * cw - 3f * d, rh - 4f * d), radius)
-                    drawRoundRect(cs.onTertiary, Offset(colX(n.start + ds) + 1.5f * d, rowY(gr) + 2f * d),
-                        Size(n.len * cw - 3f * d, rh - 4f * d), radius, style = Stroke(1.5f * d))
-                }
-            }
-            gresize?.let { g ->                          // the stretched group where it would land
-                val others = all.filter { noteKey(it.pitch, it.start) !in noteSel }
-                val (lo, hi) = resizeDeltaBounds(picked, others, length, g.edge) { n ->
-                    steps.getOrNull(n.start)?.rat?.let { it != 0 } == true }
-                val dd = if (lo <= hi) g.delta.coerceIn(lo, hi) else 0
-                if (dd != 0) for (n in picked) {
-                    val ns = if (g.edge > 0) n.start else n.start + dd
-                    val nl = if (g.edge > 0) n.len + dd else n.len - dd
-                    drawRoundRect(cs.tertiary.copy(alpha = 0.75f),
-                        Offset(colX(ns) + 1.5f * d, rowY(TOP_NOTE - n.pitch) + 2f * d),
-                        Size(nl * cw - 3f * d, rh - 4f * d), radius)
-                    drawRoundRect(cs.onTertiary,
-                        Offset(colX(ns) + 1.5f * d, rowY(TOP_NOTE - n.pitch) + 2f * d),
-                        Size(nl * cw - 3f * d, rh - 4f * d), radius, style = Stroke(1.5f * d))
-                }
-            }
             phase.value.takeIf { it >= 0f }?.toInt()?.takeIf { it in c0..c1 }?.let { ph ->
                 drawRect(cs.primary.copy(alpha = 0.2f), Offset(colX(ph), hdr), Size(cw, size.height - hdr))
-            }
-            carry?.let { c ->                            // a saved pattern carried over the roll, where it would land
-                val sh = carryShift(c) ?: return@let
-                val src = c.clip.notes.filter { it.start < length }
-                    .map { PNote(it.start, minOf(it.len, length - it.start).coerceAtLeast(1), it.pitch.coerceIn(0, TOP_NOTE)) }
-                val (ds, dp) = clampShift(src, length, sh.first, sh.second)
-                for (n in src) {
-                    val gr = TOP_NOTE - (n.pitch + dp)
-                    drawRoundRect(cs.tertiary.copy(alpha = 0.75f),
-                        Offset(colX(n.start + ds) + 1.5f * d, rowY(gr) + 2f * d),
-                        Size(n.len * cw - 3f * d, rh - 4f * d), radius)
-                    drawRoundRect(cs.onTertiary, Offset(colX(n.start + ds) + 1.5f * d, rowY(gr) + 2f * d),
-                        Size(n.len * cw - 3f * d, rh - 4f * d), radius, style = Stroke(1.5f * d))
-                }
             }
             marquee?.let { m ->
                 val left = lw + min(m.x0, m.x1) * cw - sx
@@ -1401,13 +1371,6 @@ private fun PianoRoll(
                 val sz = Size(kotlin.math.abs(m.x1 - m.x0) * cw, kotlin.math.abs(m.y1 - m.y0) * rh)
                 drawRect(cs.tertiary.copy(alpha = 0.15f), Offset(left, top), sz)
                 drawRect(cs.tertiary, Offset(left, top), sz, style = Stroke(1.5f * d))
-            }
-            ndrag?.let { dr ->
-                val (s, n, l) = if (dr.move) Triple(dr.toStep, dr.toNote, dr.len)
-                    else if (dr.edge > 0) Triple(dr.start, dr.note, dr.end - dr.start + 1)
-                    else Triple(dr.toStep, dr.note, dr.start + dr.len - dr.toStep)
-                drawRoundRect(cs.tertiary.copy(alpha = 0.75f), Offset(colX(s) + 1.5f * d, rowY(TOP_NOTE - n) + 2f * d),
-                    Size(l * cw - 3f * d, rh - 4f * d), radius)
             }
         }
         clipRect(lw, 0f, size.width, hdr) {
@@ -1443,6 +1406,12 @@ private fun NoteDrag.copy(
     end: Int = this.end, edge: Int = this.edge,
 ) = NoteDrag(move, start, note, len, grabStep, toStep, toNote, end, edge)
 
+private fun NoteDrag.preview(notes: List<PNote>, length: Int): List<PNote> {
+    val keys = setOf(noteKey(note, start))
+    return if (move) movePianoNotes(notes, keys, toStep - start, toNote - note, false, length)
+    else resizePianoNotes(notes, keys, edge, if (edge > 0) end - (start + len - 1) else toStep - start, length)
+}
+
 // ---------------------------------------------------------------- step editor ---
 
 /** p_lockable (firmware seq.c): the sound parameters only — not the sequencer's, arp's, key's or voice mode's.
@@ -1465,7 +1434,8 @@ private fun StepEditor(
                     TextButton(onClick = { vm.controller.setNoteLength(index, duration - 1) },
                         enabled = duration > 1) { Text("−") }
                     TextButton(onClick = { vm.controller.setNoteLength(index, duration + 1) },
-                        enabled = index + duration < patternLength) { Text("+") }
+                        enabled = index + duration < patternLength &&
+                            steps.getOrNull(index + duration)?.let { it.time == StepTime.NOTE && it.n > 0 } != true) { Text("+") }
                 }
                 if (step.n > 1) Text("Length applies to the whole chord", style = MaterialTheme.typography.labelSmall)
             }

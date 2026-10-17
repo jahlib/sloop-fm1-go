@@ -871,17 +871,17 @@ class DeviceController(context: Context) {
         }
     }
 
-    private fun editNotes(transform: (DeviceState, List<PNote>) -> List<PNote>?) {
+    private fun editNotes(transform: (DeviceState, List<PNote>) -> List<PNote>?): Boolean {
         val s = _state.value
-        if (s.link != Link.READY || s.isDrum) return
+        if (s.link != Link.READY || s.isDrum) return false
         val len = s.patternLength
-        val transformed = transform(s, decodeNotes(s.steps, len)) ?: return
-        val changed = encodeNotes(s.steps, len, normalizeNotes(s, transformed, len))
+        val transformed = transform(s, decodeNotes(s.steps, len)) ?: return false
+        val changed = encodeNotes(s.steps, len, transformed)
         if (changed == null) {
-            _state.update { it.copy(queueError = "Four notes maximum per step") }
-            return
+            showEditNotice("Four notes maximum per step")
+            return false
         }
-        if (changed.isNotEmpty()) applySynthBatch(changed.map { UserEdit.Synth(s.selectedTrack, it.index, it) })
+        return changed.isNotEmpty() && applySynthBatch(changed.map { UserEdit.Synth(s.selectedTrack, it.index, it) })
     }
 
     /** Adds a note of [len] steps at [index], or removes the note of that pitch sounding there. */
@@ -890,31 +890,20 @@ class DeviceController(context: Context) {
         editNotes { s, notes ->
             val hit = notes.firstOrNull { it.pitch == note && index in it.start..it.end }
             if (hit != null) notes - hit else {
-                val maxEnd = notes.filter { it.pitch == note && it.start > index }
-                    .minOfOrNull { it.start - 1 } ?: (s.patternLength - 1)
-                val n = PNote(index, len.coerceIn(1, maxEnd - index + 1), note)
-                if (voiceMode(s) == V_POLY) notes + n else notes.carveCovered(n) + n
+                placePianoNotes(notes, listOf(PNote(index, len.coerceAtLeast(1), note)), s.patternLength)
             }
         }
     }
 
     /**
      * Moves (or, with [copy], clones) the notes named by [keys] ([noteKey]) as one group by [dStep] steps and [dPitch]
-     * semitones; the group is clamped to stay inside the pattern and 0..127. Notes already lying where the group
-     * lands win: the dragged notes are cut away where they overlap. One batch through the normal edit queue.
+     * semitones; the group is clamped to stay inside the pattern and 0..127. Landing on a NOTE joins its chord;
+     * landing inside a TIE cuts that tail. One batch through the normal edit queue.
      */
-    fun placeNotes(keys: Set<Int>, dStep: Int, dPitch: Int, copy: Boolean) {
+    fun placeNotes(keys: Set<Int>, dStep: Int, dPitch: Int, copy: Boolean): Boolean =
         editNotes { s, notes ->
-            val sel = notes.filter { noteKey(it.pitch, it.start) in keys }
-            if (sel.isEmpty()) return@editNotes null
-            val ds = dStep.coerceIn(-sel.minOf { it.start }, s.patternLength - 1 - sel.maxOf { it.end })
-            val dp = dPitch.coerceIn(-sel.minOf { it.pitch }, 127 - sel.maxOf { it.pitch })
-            if (!copy && ds == 0 && dp == 0) return@editNotes null
-            val base = if (copy) notes else notes - sel.toSet()
-            val mono = voiceMode(s) != V_POLY
-            base + sel.flatMap { it.copy(start = it.start + ds, pitch = it.pitch + dp).freeParts(base, mono) }
+            movePianoNotes(notes, keys, dStep, dPitch, copy, s.patternLength)
         }
-    }
 
     /** Removes the notes named by [keys] ([noteKey]). */
     fun deleteNotes(keys: Set<Int>) {
@@ -954,7 +943,7 @@ class DeviceController(context: Context) {
         } else {
             val after = transposeSelectedSteps(s.steps, s.patternLength, keys, delta)
             if (after == null) {
-                showEditNotice("Transpose cancelled: note range, overlap or legato conflict")
+                showEditNotice("Transpose cancelled: note range or duplicate pitch in chord")
                 return null
             }
             val changed = after.filterIndexed { i, step -> step != s.steps[i] }
@@ -997,103 +986,44 @@ class DeviceController(context: Context) {
         return true
     }
 
-    /** Moves the note that starts at [fromIndex] with pitch [fromNote]; its length is kept. */
+    /** Moves one pitch with the same chord placement rules as a group drag. */
     fun moveNote(fromIndex: Int, fromNote: Int, toIndex: Int, toNote: Int) {
         if (toIndex !in 0 until _state.value.patternLength || toNote !in 0..127) return
-        if (fromIndex == toIndex && fromNote == toNote) return
-        editNotes { s, notes ->
-            val n = notes.firstOrNull { it.pitch == fromNote && it.start == fromIndex } ?: return@editNotes null
-            val rest = notes - n
-            val moved = PNote(toIndex, minOf(n.len, s.patternLength - toIndex), toNote)
-            if (rest.any { it.pitch == toNote && it.start <= moved.end && it.end >= moved.start }) {
-                _state.update { it.copy(queueError = "Note already there") }
-                return@editNotes null
-            }
-            if (voiceMode(s) == V_POLY) rest + moved else rest.carveCovered(moved) + moved
-        }
+        placeNotes(setOf(noteKey(fromNote, fromIndex)), toIndex - fromIndex, toNote - fromNote, copy = false)
     }
 
     /** Shifts the left edge of the note that starts at [start] by [delta] steps, keeping its end. */
     fun adjustNoteStart(start: Int, pitch: Int, delta: Int) {
-        editNotes { s, notes ->
-            val n = notes.firstOrNull { it.pitch == pitch && it.start == start } ?: return@editNotes null
-            if (delta < 0 && s.steps.getOrNull(n.start)?.rat.let { it != null && it != 0 }) {
-                _state.update { it.copy(queueError = "Remove ratchets before extending a note") }
-                return@editNotes null
-            }
-            val minStart = notes.filter { it.pitch == pitch && it.end < n.start }
-                .maxOfOrNull { it.end + 1 } ?: 0
-            var ns = (n.start + delta).coerceIn(minStart, n.end)
-            notes.firstOrNull { it !== n && it.pitch == pitch && ns in it.start..it.end }
-                ?.let { ns = it.end + 1 }
-            if (ns == n.start || ns > n.end) null else {
-                val m = n.copy(start = ns, len = n.end - ns + 1)
-                if (voiceMode(s) == V_POLY) notes - n + m else (notes - n).carveCovered(m) + m
-            }
-        }
+        resizeNotes(setOf(noteKey(pitch, start)), -1, delta)
     }
 
-    /** Resizes the note of [pitch] starting at [start]. */
+    /** A pitch's right handle changes the shared duration of its NOTE + TIE chord. */
     fun resizeNote(start: Int, pitch: Int, requestedLength: Int) {
         editNotes { s, notes ->
             val n = notes.firstOrNull { it.pitch == pitch && it.start == start } ?: return@editNotes null
-            val resized = resized(s, notes, n, requestedLength) ?: return@editNotes null
-            if (voiceMode(s) == V_POLY) notes - n + resized
-            else (notes - n).carveCovered(resized) + resized
+            resizePianoNotes(notes, setOf(noteKey(pitch, start)), 1, requestedLength - n.len, s.patternLength)
         }
     }
 
     /**
      * Stretches or shrinks one [edge] (1 = right, -1 = left) of the notes named by [keys] ([noteKey]) by the
-     * same [delta] steps, so the selection keeps its shape; the applied delta is clamped so no note drops
-     * below one step, leaves the pattern or runs over a same-pitch neighbour. One batch through the queue.
+     * same [delta] steps. Whole chords resize together and stop at the next NOTE, of any pitch.
      */
-    fun resizeNotes(keys: Set<Int>, edge: Int, delta: Int) {
-        if (delta == 0 || edge == 0) return
+    fun resizeNotes(keys: Set<Int>, edge: Int, delta: Int): Boolean =
         editNotes { s, notes ->
-            val sel = notes.filter { noteKey(it.pitch, it.start) in keys }
-            if (sel.isEmpty()) return@editNotes null
-            val others = notes - sel.toSet()
-            val (lo, hi) = resizeDeltaBounds(sel, others, s.patternLength, edge) {
-                s.steps.getOrNull(it.start)?.rat?.let { r -> r != 0 } == true
-            }
-            val d = if (lo <= hi) delta.coerceIn(lo, hi) else 0
-            if (d == 0) return@editNotes null
-            var out = notes
-            for (n in sel) {
-                val r = if (edge > 0) n.copy(len = n.len + d) else n.copy(start = n.start + d, len = n.len - d)
-                out = if (voiceMode(s) == V_POLY) out - n + r else (out - n).carveCovered(r) + r
-            }
-            out.takeIf { it != notes }
+            resizePianoNotes(notes, keys, edge, delta, s.patternLength)
         }
-    }
 
     /** Resizes every note that starts at [index] (a chord shares one duration in the step editor). */
     fun setNoteLength(index: Int, requestedLength: Int) {
         editNotes { s, notes ->
-            val starting = notes.filter { it.start == index }
-            if (starting.isEmpty()) return@editNotes null
-            var out = notes
-            starting.forEach { n -> resized(s, out, n, requestedLength)?.let { r ->
-                out = if (voiceMode(s) == V_POLY) out - n + r else (out - n).carveCovered(r) + r
-            } }
-            out.takeIf { it != notes }
+            val n = notes.firstOrNull { it.start == index } ?: return@editNotes null
+            resizePianoNotes(notes, setOf(noteKey(n.pitch, index)), 1, requestedLength - n.len, s.patternLength)
         }
     }
 
-    private fun resized(s: DeviceState, notes: List<PNote>, n: PNote, requested: Int): PNote? {
-        if (s.steps.getOrNull(n.start)?.rat.let { it != null && it != 0 } && requested > 1) {
-            _state.update { it.copy(queueError = "Remove ratchets before extending a note") }
-            return null
-        }
-        val maxEnd = notes.filter { it.pitch == n.pitch && it.start > n.start }.minOfOrNull { it.start - 1 }
-            ?: (s.patternLength - 1)
-        val len = requested.coerceIn(1, maxEnd - n.start + 1)
-        return if (len == n.len) null else n.copy(len = len)
-    }
-
-    /** STEP_SET cannot carry SF_CONT (SLOOP 2.7), so a written step never holds it: the local steps
-     * then match what the device keeps, and the note model's SLIDE legato carries the lengths. */
+    /** STEP_SET cannot carry SF_CONT (SLOOP 2.7). Match the stored reply flags locally;
+     * length edits normally write only TIE/REST steps and leave the NOTE flags untouched. */
     private fun applySynthBatch(requested: List<UserEdit.Synth>, record: Boolean = true): Boolean {
         val batch = requested.map { e ->
             if (e.step.hasContinuations()) e.copy(step = e.step.copy(flags = e.step.flags and CONT_ALL.inv())) else e
@@ -1306,8 +1236,7 @@ class DeviceController(context: Context) {
 
     /**
      * Drops a saved piano-roll pattern on the roll as one group shifted by [dStep] steps and [dPitch] semitones (kept
-     * inside the pattern and 0..127): the figure stays as saved, and notes already there win where they overlap.
-     * One batch of plain step edits through the normal queue.
+     * inside the pattern and 0..127), using the same NOTE + TIE rules as manual placement.
      */
     fun dropClip(clip: Clip, dStep: Int, dPitch: Int) {
         editNotes { s, notes ->
@@ -1316,8 +1245,7 @@ class DeviceController(context: Context) {
             if (src.isEmpty()) return@editNotes null
             val ds = dStep.coerceIn(-src.minOf { it.start }, s.patternLength - 1 - src.maxOf { it.end })
             val dp = dPitch.coerceIn(-src.minOf { it.pitch }, 127 - src.maxOf { it.pitch })
-            val mono = voiceMode(s) != V_POLY
-            notes + src.flatMap { it.copy(start = it.start + ds, pitch = it.pitch + dp).freeParts(notes, mono) }
+            placePianoNotes(notes, src.map { it.copy(start = it.start + ds, pitch = it.pitch + dp) }, s.patternLength)
         }
     }
 
