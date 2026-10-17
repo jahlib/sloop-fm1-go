@@ -91,8 +91,8 @@ fun LiveScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, nav
             return
         }
         Row(Modifier.weight(1f).padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            MixCard(state, l, ctl, Modifier.weight(1f).fillMaxHeight())
-            FxCard(ctl, Modifier.weight(1.1f).fillMaxHeight())
+            MixCard(state, l, ctl, Modifier.weight(1.15f).fillMaxHeight())
+            FxCard(ctl, Modifier.weight(1.05f).fillMaxHeight())
         }
     }
 }
@@ -141,65 +141,61 @@ private fun MixCard(state: DeviceState, l: Live?, ctl: com.sloop.go.device.Devic
     val info = state.info!!
     val n = (l?.meter?.size ?: 4).coerceAtLeast(1)
     Card(modifier) {
-        Column(Modifier.fillMaxSize().padding(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                for (t in 0 until n) {
-                    val e = state.tracks?.tracks?.getOrNull(t)
-                    val drum = e != null && e.engine >= info.nengines
-                    val muted = ((l?.mutes ?: 0) shr t) and 1 == 1
-                    val solo = ((l?.solos ?: 0) shr t) and 1 == 1
-                    Column(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(10.dp)).background(cs.surface.copy(alpha = 0.5f)).padding(3.dp),
-                        verticalArrangement = Arrangement.spacedBy(3.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("T${t + 1}", fontFamily = SloopFontFamily, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                        Pad("STU", false, Modifier.fillMaxWidth().weight(1f), small = true, accent = SEND_C,
-                            down = { ctl.holdSlicer(t, true) }, up = { ctl.holdSlicer(t, false) })
-                        // the drum track has no DST / CHO: its two sends are the global drum REV and DLY
-                        val sends = if (drum) listOf(null, null, "REV" to G_DRREV, "DLY" to G_DRDLY)
-                            else listOf("DST" to 33, "CHO" to 34, "DLY" to 35, "REV" to 36)
-                        for (s in sends) {
-                            if (s == null) { Spacer(Modifier.weight(1f)); continue }
-                            Pad(s.first, false, Modifier.fillMaxWidth().weight(1f), small = true, accent = SEND_C,
-                                down = { ctl.holdParam(t, s.second, true, global = drum) },
-                                up = { ctl.holdParam(t, s.second, false, global = drum) })
-                        }
-                        Pad("MUTE", muted, Modifier.fillMaxWidth().weight(1f), small = true, accent = MUTE_C,
-                            tap = { ctl.liveTap(LAYER_GLO, KEY_MUTE + t) })
-                        Pad("SOLO", solo, Modifier.fillMaxWidth().weight(1f), small = true, accent = SOLO_C,
-                            tap = { ctl.liveTap(LAYER_GLO, KEY_SOLO + t) })
+        Row(Modifier.fillMaxSize().padding(6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            for (t in 0 until n) {
+                val e = state.tracks?.tracks?.getOrNull(t)
+                val drum = e != null && e.engine >= info.nengines
+                val muted = ((l?.mutes ?: 0) shr t) and 1 == 1
+                val solo = ((l?.solos ?: 0) shr t) and 1 == 1
+                Column(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(10.dp)).background(cs.surface.copy(alpha = 0.5f)).padding(3.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("T${t + 1}", fontFamily = SloopFontFamily, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                    Pad("STU", false, Modifier.fillMaxWidth().weight(1f), small = true, accent = SEND_C,
+                        down = { ctl.holdSlicer(t, true) }, up = { ctl.holdSlicer(t, false) })
+                    // the drum track has no DST / CHO: its two sends are the global drum REV and DLY
+                    val sends = if (drum) listOf(null, null, "REV" to G_DRREV, "DLY" to G_DRDLY)
+                        else listOf("DST" to 33, "CHO" to 34, "DLY" to 35, "REV" to 36)
+                    for (s in sends) {
+                        if (s == null) { Spacer(Modifier.weight(1f)); continue }
+                        Pad(s.first, false, Modifier.fillMaxWidth().weight(1f), small = true, accent = SEND_C,
+                            down = { ctl.holdParam(t, s.second, true, global = drum) },
+                            up = { ctl.holdParam(t, s.second, false, global = drum) })
                     }
+                    Pad("MUTE", muted, Modifier.fillMaxWidth().weight(1f), small = true, accent = MUTE_C,
+                        tap = { ctl.liveTap(LAYER_GLO, KEY_MUTE + t) })
+                    Pad("SOLO", solo, Modifier.fillMaxWidth().weight(1f), small = true, accent = SOLO_C,
+                        tap = { ctl.liveTap(LAYER_GLO, KEY_SOLO + t) })
                 }
             }
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                SectionLabel("PERFORM · HOLD")
-                Row(Modifier.height(38.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Pad("FILL", l?.fillNow == true, Modifier.weight(1f).fillMaxHeight(), small = true, accent = FILL_C,
-                        down = { ctl.liveKey(LAYER_GLO, KEY_FILL, true) }, up = { ctl.liveKey(LAYER_GLO, KEY_FILL, false) })
-                    Pad("FILL NEXT BAR", l?.fillNext == true, Modifier.weight(1f).fillMaxHeight(), small = true, accent = FILL_C,
-                        tap = { ctl.liveTap(LAYER_GLO, KEY_FILL_BAR) })
-                }
-                Row(Modifier.height(38.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Pad("REV THROW", ((l?.throws ?: 0) and 1) != 0, Modifier.weight(1f).fillMaxHeight(), small = true, accent = THROW_C,
-                        down = { ctl.liveThrow(1) }, up = { ctl.liveThrow(0) })
-                    Pad("ECHO THROW", ((l?.throws ?: 0) and 2) != 0, Modifier.weight(1f).fillMaxHeight(), small = true, accent = THROW_C,
-                        down = { ctl.liveThrow(2) }, up = { ctl.liveThrow(0) })
-                }
+            // the PERFORM holds: a vertical strip one button wide, between the tracks and the FX
+            Column(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(10.dp)).background(cs.surface.copy(alpha = 0.5f)).padding(3.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("PERF", fontFamily = SloopFontFamily, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                Pad("FILL", l?.fillNow == true, Modifier.fillMaxWidth().weight(1f), small = true, accent = FILL_C,
+                    down = { ctl.liveKey(LAYER_GLO, KEY_FILL, true) }, up = { ctl.liveKey(LAYER_GLO, KEY_FILL, false) })
+                Pad("FILL NEXT BAR", l?.fillNext == true, Modifier.fillMaxWidth().weight(1f), small = true, accent = FILL_C,
+                    tap = { ctl.liveTap(LAYER_GLO, KEY_FILL_BAR) })
+                Pad("REV THROW", ((l?.throws ?: 0) and 1) != 0, Modifier.fillMaxWidth().weight(1f), small = true, accent = THROW_C,
+                    down = { ctl.liveThrow(1) }, up = { ctl.liveThrow(0) })
+                Pad("ECHO THROW", ((l?.throws ?: 0) and 2) != 0, Modifier.fillMaxWidth().weight(1f), small = true, accent = THROW_C,
+                    down = { ctl.liveThrow(2) }, up = { ctl.liveThrow(0) })
             }
         }
     }
 }
 
-private class FxGroup(val title: String, val color: androidx.compose.ui.graphics.Color, val fx: List<Int>)
+private class FxGroup(val title: String, val color: androidx.compose.ui.graphics.Color, val fx: List<Int>, val cols: Int = 4)
 
 private val FX_GROUPS = listOf(
-    FxGroup("LOOP", SloopGreen, listOf(0, 1, 2, 3, 24)),
-    FxGroup("GLITCH", SloopOrange, listOf(4, 5, 6, 7, 19, 23)),
+    FxGroup("LOOP", SloopGreen, listOf(0, 1, 2, 3, 24), cols = 3),
+    FxGroup("GLITCH", SloopOrange, listOf(4, 5, 6, 7, 19, 23), cols = 3),
     FxGroup("FILTER", SloopBlue, listOf(8, 9, 10, 16, 17, 18)),
     FxGroup("MOD", androidx.compose.ui.graphics.Color(0xFFB07CFF), listOf(11, 12, 13, 14, 15, 20, 21, 22, 25, 26)),
 )
 
 @Composable
 private fun FxGroupBlock(g: FxGroup, ctl: com.sloop.go.device.DeviceController, modifier: Modifier) {
-    val rows = g.fx.chunked(4)
+    val rows = g.fx.chunked(g.cols)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
         SectionLabel("${g.title} · HOLD")
         rows.forEach { row ->
@@ -208,7 +204,7 @@ private fun FxGroupBlock(g: FxGroup, ctl: com.sloop.go.device.DeviceController, 
                     Pad(FX_NAMES[fx], false, Modifier.weight(1f).fillMaxHeight(), small = true, accent = g.color,
                         down = { ctl.liveFx(fx, true) }, up = { ctl.liveFx(fx, false) })
                 }
-                repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
+                repeat(g.cols - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
@@ -219,7 +215,7 @@ private fun FxGroupBlock(g: FxGroup, ctl: com.sloop.go.device.DeviceController, 
 private fun FxCard(ctl: com.sloop.go.device.DeviceController, modifier: Modifier) {
     Card(modifier) {
         androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().padding(6.dp)) {
-            val weightOf = { g: FxGroup -> g.fx.chunked(4).size + 0.35f }
+            val weightOf = { g: FxGroup -> g.fx.chunked(g.cols).size + 0.35f }
             if (maxWidth > maxHeight) {
                 Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(FX_GROUPS.take(2), FX_GROUPS.drop(2)).forEach { col ->

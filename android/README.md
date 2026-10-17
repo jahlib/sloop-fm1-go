@@ -46,13 +46,15 @@ reported and discarded on disconnect. App-process death also loses queued edits 
   tap to add/remove a note, drag the handle at the right end of a note bar to lengthen it
   (via TIE steps), long-press a note and drag to move it, drag empty space to scroll.
   A chord shares one duration, since TIE holds the entire synth track's previous step. Each synth
-  step supports up to four notes. As in the original web editor, a new NOTE inside a TIE tail
-  ends that tail; extending a chord stops before the next NOTE of any pitch. Adding a pitch at
-  an existing NOTE keeps that chord's duration. The roll shows each stored NOTE and its following
-  TIEs. A SLOOP 2.7 CONT slot (a key released late over the next recorded note) is drawn as
-  released at that NOTE; the step is kept as recorded, so FM-1 may still hold the pitch longer.
-  Editing that note (length, move, delete) drops its hidden continuation, so FM-1 then plays
-  exactly the drawn NOTE + TIE length.
+  step supports up to four notes. Editing follows the track's VOICE: on MONO/LEGATO/UNISON notes
+  never overlap — placing replaces the note starting there, moves and resizes stop at neighbours —
+  while on POLY pitches land freely and the roll draws true overlaps, including SLOOP 2.7 recorded
+  CONT chains (a key released late under the next note keeps sounding; untouched steps stay as
+  recorded). A step write cannot carry CONT, so a bar drawn under a later attack is released there
+  on the device while the roll keeps the drawn overlap; a bar kept inside a recorded chain crosses
+  it unchanged. On POLY each bar in a chord has its own length; adding a pitch at an existing NOTE
+  keeps that chord's duration. Editing a note (length, move, delete) drops its hidden continuation,
+  so FM-1 then plays exactly the drawn NOTE + TIE length.
   **Q** quantizes note starts (1/2 … 1/32 of a bar, by DIV) of the selection or the whole track,
   keeping lengths. The TIE toolbar switch adds
   continuation markers; dragging previews the same chord boundaries that will be sent.

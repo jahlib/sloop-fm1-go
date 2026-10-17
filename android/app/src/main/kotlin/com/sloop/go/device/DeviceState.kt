@@ -29,6 +29,7 @@ data class DeviceState(
     val gdesc: List<Desc?> = emptyList(),
     val dump: Dump? = null,                    // selected track parameters + globals
     val steps: List<Step> = emptyList(),       // synth steps of the selected track
+    val intentNotes: List<PNote>? = null,      // drawn piano-roll intent when it outlives what steps can hold (POLY overlaps)
     val drumSteps: List<DrumStep> = emptyList(), // drum steps (drum track + v5 firmware)
     val micro: List<Int> = emptyList(),        // per-step nudge -32..31 (proto v7, SLOOP 2.4)
     val fill: List<Int> = emptyList(),         // per-step condition 0 always / 1 fill / 2 no fill (v8)
@@ -74,6 +75,15 @@ data class DeviceState(
         return "TRACK ${selectedTrack + 1} · $engine · $preset"
     }
 
+    /** SLOOP 2.7 P_VOICE on the selected track: 0 POLY, 1 MONO, 2 LEGATO, 3 UNISON (core.h). */
+    val voicePoly: Boolean get() {
+        val i = pdesc.indexOfFirst { it?.label == "VCE" }
+        return i < 0 || paramValue(i) == 0
+    }
+
+    /** What the piano roll draws: the edited intent when set, otherwise the stored steps decoded. */
+    val drawnNotes: List<PNote> get() = intentNotes ?: decodeNotes(steps, patternLength, voicePoly)
+
     fun paramValue(id: Int): Int = dump?.p?.getOrNull(id) ?: 0
     fun globalValue(id: Int): Int = dump?.g?.getOrNull(id) ?: 0
 
@@ -85,11 +95,13 @@ data class DeviceState(
         return copy(tracks = t.copy(tracks = list))
     }
 
-    /** Returns a new state with one parameter changed (fresh arrays, so StateFlow emits). */
+    /** Returns a new state with one parameter changed (fresh arrays, so StateFlow emits).
+     * A voice-mode change re-decodes the pattern, so any drawn intent is dropped. */
     fun withParam(scope: Int, id: Int, value: Int): DeviceState {
         val d = dump ?: return this
         return when (scope) {
-            0 -> if (id < d.p.size) copy(dump = d.copy(p = d.p.copyOf().also { it[id] = value })) else this
+            0 -> if (id < d.p.size) copy(dump = d.copy(p = d.p.copyOf().also { it[id] = value }),
+                intentNotes = if (id == pdesc.indexOfFirst { it?.label == "VCE" }) null else intentNotes) else this
             1 -> if (id < d.g.size) copy(dump = d.copy(g = d.g.copyOf().also { it[id] = value })) else this
             else -> this
         }

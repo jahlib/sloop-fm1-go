@@ -166,7 +166,8 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     }
 
     Box(Modifier.fillMaxSize()) {
-    Column(Modifier.fillMaxSize()) {
+    Row(Modifier.fillMaxSize()) {
+        Column(Modifier.weight(1f).fillMaxHeight()) {
         ControlPanel(vm, state, nav, onPick = { picker = true }, onClear = { askClear = true }, onFit = { fitTick++ },
             onSave = { browser = BrowserMode.SAVE }, onLoad = { browser = BrowserMode.LOAD },
             onOptions = { options = true }, optionsLabel = "Step ${selected + 1}", newLen = if (state.drumGrid) null else newLen,
@@ -178,11 +179,11 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
                     if (state.sequencerMode == SequencerMode.NOW) {
                         vm.controller.transposeSelectedNotes(noteSel, d)?.let { noteSel = it }
                     } else {
-                        val picked = decodeNotes(state.steps, state.patternLength)
+                        val picked = state.drawnNotes
                             .filter { noteKey(it.pitch, it.start) in noteSel }
                         if (vm.controller.placeNotes(noteSel, 0, d, copy = false)) {
                             val dp = clampShift(picked, state.patternLength, 0, d).second
-                            val after = decodeNotes(vm.controller.state.value.steps, state.patternLength)
+                            val after = vm.controller.state.value.drawnNotes
                                 .map { noteKey(it.pitch, it.start) }.toSet()
                             noteSel = picked.map { noteKey(it.pitch + dp, it.start) }.filter { it in after }.toSet()
                         }
@@ -196,11 +197,10 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
             })
         if (state.drumGrid) DrumGrid(vm, state, fitTick, selectMode, { selectMode = it }, noteSel, { noteSel = it },
             selected, { sel = it }, Modifier.weight(1f).fillMaxWidth())
-        else Row(Modifier.weight(1f).fillMaxWidth()) {
-            PianoRoll(vm, state, fitTick, selected, { sel = it }, selectMode, noteSel, { noteSel = it },
-                carry, { carry = null; browser = null }, newLen, showTies, Modifier.weight(1f).fillMaxHeight())
-            if (chin) FxChin(vm, state)
+        else PianoRoll(vm, state, fitTick, selected, { sel = it }, selectMode, noteSel, { noteSel = it },
+            carry, { carry = null; browser = null }, newLen, showTies, Modifier.weight(1f).fillMaxWidth())
         }
+        if (chin && !state.drumGrid) FxChin(vm, state)
     }
     browser?.let { mode ->
         ClipBrowserOverlay(vm, kind, mode, carrying = carry != null,
@@ -261,14 +261,15 @@ private fun ControlPanel(
     // measured width is reserved in 40dp steps, so the controls get all the space it doesn't need
     // while small text changes don't move them.
     var statusPx by remember { mutableIntStateOf(0) }
+    var navPx by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
     val bucket = with(density) { 40.dp.toPx() }
     val statusW = (((statusPx + bucket - 1) / bucket).toInt() * 40).dp
+    val navW = with(density) { navPx.toDp() }
     BoxWithConstraints(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
     Row(Modifier.horizontalScroll(rememberScrollState()).clipToBounds()
-            .padding(start = 4.dp, end = statusW + 4.dp),
+            .padding(start = navW + 4.dp, end = statusW + 4.dp),
         horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-        nav()
         TrackSelect(vm, state)
         Text(state.soundLabel.substringAfter("· ") + " ▾",
             Modifier.widthIn(max = 120.dp).clickable(onClick = onPick).padding(horizontal = 6.dp, vertical = 10.dp),
@@ -318,6 +319,8 @@ private fun ControlPanel(
             mini(Icons.Filled.Tune, optionsLabel, onOptions)
         }
     }
+    Box(Modifier.align(Alignment.CenterStart).background(MaterialTheme.colorScheme.surface)
+        .padding(start = 4.dp).onSizeChanged { navPx = it.width }, contentAlignment = Alignment.Center) { nav() }
     val parts = buildList {
         add("LEN ${state.patternLength}")
         if (late && state.draftTracks.isNotEmpty()) add("drafts ${state.draftTracks.sorted().joinToString(",") { "${it + 1}" }}")
@@ -656,7 +659,7 @@ private fun DrumGrid(
     fun setSel(s: Set<Int>) { live.v = s; onSelNow(s) }
     val haptic = LocalHapticFeedback.current
 
-    LaunchedEffect(state.selectedTrack, length, vp.size.width > 0, fitTick) {
+    LaunchedEffect(state.selectedTrack, length, vp.size, fitTick) {
         if (vp.size.width == 0) return@LaunchedEffect
         vp.cw = ((vp.w - vp.lw) / length).coerceIn(4f * d, 64f * d)
         vp.rh = (vp.h - vp.hdr) / DRUM_LANES.size
@@ -1050,7 +1053,7 @@ private fun PianoRoll(
         onCarryDone()
     }
 
-    LaunchedEffect(state.selectedTrack, length, vp.size.width > 0, fitTick) {
+    LaunchedEffect(state.selectedTrack, length, vp.size, fitTick) {
         if (vp.size.width == 0) return@LaunchedEffect
         vp.cw = ((vp.w - vp.lw) / length).coerceIn(4f * d, 64f * d)
         val cur = vm.controller.state.value.steps
@@ -1081,12 +1084,12 @@ private fun PianoRoll(
     val handler = remember(state.selectedTrack, length, selectMode) {
         object : GridHandler {
             fun noteAtRow(y: Float) = TOP_NOTE - vp.rowAt(y)
-            fun allNotes() = decodeNotes(vm.controller.state.value.steps, length)
+            fun allNotes() = vm.controller.state.value.drawnNotes
             fun hit(p: Offset): NoteHit? {
                 if (p.x < vp.lw || p.y < vp.hdr) return null
                 val note = noteAtRow(p.y)
                 if (note !in 0..TOP_NOTE) return null
-                val all = decodeNotes(vm.controller.state.value.steps, length)
+                val all = vm.controller.state.value.drawnNotes
                 val slack = 8f * vp.d
                 val zone = min(vp.cw * 0.4f, 24f * vp.d)
                 for (x in floatArrayOf(p.x, p.x - slack, p.x + slack)) {
@@ -1218,7 +1221,7 @@ private fun PianoRoll(
                     gresize?.let { g ->
                         val sel = allNotes().filter { noteKey(it.pitch, it.start) in live.v }
                         val others = allNotes().filter { noteKey(it.pitch, it.start) !in live.v }
-                        val (lo, hi) = resizeDeltaBounds(sel, others, length, g.edge)
+                        val (lo, hi) = resizeDeltaBounds(sel, others, length, g.edge, state.voicePoly)
                         val d = if (lo <= hi) g.delta.coerceIn(lo, hi) else 0
                         if (d != 0) {
                             if (vm.controller.resizeNotes(live.v, g.edge, g.delta) && g.edge < 0)
@@ -1233,7 +1236,7 @@ private fun PianoRoll(
                 drag(p)
                 val fin = ndrag ?: dr
                 ndrag = null
-                val expected = fin.preview(allNotes(), length).firstOrNull {
+                val expected = fin.preview(allNotes(), length, vm.controller.state.value.voicePoly).firstOrNull {
                     if (fin.move) it.start == fin.toStep && it.pitch == fin.toNote
                     else it.pitch == fin.note && (if (fin.edge > 0) it.start == fin.start
                         else it.end == fin.start + fin.len - 1)
@@ -1280,27 +1283,28 @@ private fun PianoRoll(
                 drawLine(if (c % 4 == 0) strongLine else line, Offset(colX(c), hdr), Offset(colX(c), size.height),
                     if (c % 4 == 0) 1.5f * d else 1f * d)
             }
-            val all = decodeNotes(steps, length)
+            val poly = state.voicePoly
+            val all = state.drawnNotes
             val picked = if (noteSel.isNotEmpty()) all.filter { noteKey(it.pitch, it.start) in noteSel } else emptyList()
             // Preview the actual NOTE + TIE result, including cut tails and the other
             // pitches of a resized chord. Use the same transformations as the controller.
-            val preview = gdrag?.let { movePianoNotes(all, noteSel, it.dStep, it.dPitch, it.copy, length) }
-                ?: gresize?.let { resizePianoNotes(all, noteSel, it.edge, it.delta, length) }
-                ?: ndrag?.preview(all, length)
+            val preview = gdrag?.let { movePianoNotes(all, noteSel, it.dStep, it.dPitch, it.copy, length, poly) }
+                ?: gresize?.let { resizePianoNotes(all, noteSel, it.edge, it.delta, length, poly) }
+                ?: ndrag?.preview(all, length, poly)
                 ?: carry?.let { c ->
                     carryShift(c)?.let { sh ->
                         val src = c.clip.notes.filter { it.start < length }
                             .map { PNote(it.start, minOf(it.len, length - it.start).coerceAtLeast(1),
                                 it.pitch.coerceIn(0, TOP_NOTE)) }
                         val (ds, dp) = clampShift(src, length, sh.first, sh.second)
-                        placePianoNotes(all, src.map { it.copy(start = it.start + ds, pitch = it.pitch + dp) }, length)
+                        placePianoNotes(all, src.map { it.copy(start = it.start + ds, pitch = it.pitch + dp) }, length, poly)
                     }
                 }
-            val previewWrites = preview?.let { encodeNotes(steps, length, it) }
+            val previewWrites = preview?.let { encodeNotes(steps, length, it, poly) }
             val displaySteps = if (previewWrites == null) steps else steps.toMutableList().also { list ->
                 previewWrites.forEach { list[it.index] = it }
             }
-            val displayed = if (previewWrites == null) all else decodeNotes(displaySteps, length)
+            val displayed = preview ?: all
             for (n in displayed) {
                 val r = TOP_NOTE - n.pitch
                 if (r !in r0..r1 || n.end < c0 || n.start > c1) continue
@@ -1408,10 +1412,10 @@ private fun NoteDrag.copy(
     end: Int = this.end, edge: Int = this.edge,
 ) = NoteDrag(move, start, note, len, grabStep, toStep, toNote, end, edge)
 
-private fun NoteDrag.preview(notes: List<PNote>, length: Int): List<PNote> {
+private fun NoteDrag.preview(notes: List<PNote>, length: Int, poly: Boolean): List<PNote> {
     val keys = setOf(noteKey(note, start))
-    return if (move) movePianoNotes(notes, keys, toStep - start, toNote - note, false, length)
-    else resizePianoNotes(notes, keys, edge, if (edge > 0) end - (start + len - 1) else toStep - start, length)
+    return if (move) movePianoNotes(notes, keys, toStep - start, toNote - note, false, length, poly)
+    else resizePianoNotes(notes, keys, edge, if (edge > 0) end - (start + len - 1) else toStep - start, length, poly)
 }
 
 // ---------------------------------------------------------------- step editor ---

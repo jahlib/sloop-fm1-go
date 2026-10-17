@@ -13,6 +13,9 @@ class LiveNotes private constructor(private val bits: LongArray) {
     fun has(ch: Int, note: Int): Boolean =
         ch in 0..15 && note in 0..127 && (bits[ch * 2 + (note ushr 6)] ushr (note and 63)) and 1L != 0L
 
+    /** Any key or sounded note still on. */
+    fun anyHeld(): Boolean = bits.any { it != 0L }
+
     fun with(ch: Int, note: Int, on: Boolean): LiveNotes {
         if (ch !in 0..15 || note !in 0..127 || has(ch, note) == on) return this
         val b = bits.copyOf()

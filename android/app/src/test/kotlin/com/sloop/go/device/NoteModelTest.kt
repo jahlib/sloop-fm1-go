@@ -16,9 +16,9 @@ class NoteModelTest {
     private fun rest(i: Int) = Step(i, 0, IntArray(4), StepTime.REST, 0, 0)
     private fun tie(i: Int) = rest(i).copy(time = StepTime.TIE)
 
-    private fun apply(steps: List<Step>, notes: List<PNote>): List<Step> =
+    private fun apply(steps: List<Step>, notes: List<PNote>, poly: Boolean = false): List<Step> =
         steps.toMutableList().also { out ->
-            encodeNotes(steps, steps.size, notes)!!.forEach { out[it.index] = it }
+            encodeNotes(steps, steps.size, notes, poly)!!.forEach { out[it.index] = it }
         }
 
     private fun recordedOverlap() = listOf(
@@ -146,7 +146,7 @@ class NoteModelTest {
     // Reference semantics: original_os/sloop-fm1/web/editor.html, ROLL.place/remove/resize.
     @Test fun placingInsideATailCutsItWithoutCopyingTheOldPitchOrResumingIt() {
         val steps = listOf(note(0, listOf(60)), tie(1), tie(2), tie(3), tie(4), tie(5), rest(6))
-        val notes = placePianoNotes(decodeNotes(steps, steps.size), listOf(PNote(2, 2, 64)), steps.size)
+        val notes = placePianoNotes(decodeNotes(steps, steps.size), listOf(PNote(2, 2, 64)), steps.size, false)
         val after = apply(steps, notes)
         assertEquals(listOf(note(0, listOf(60)), tie(1), note(2, listOf(64)), tie(3), rest(4), rest(5), rest(6)), after)
         assertEquals(listOf(PNote(0, 2, 60), PNote(2, 2, 64)), decodeNotes(after, after.size))
@@ -155,7 +155,7 @@ class NoteModelTest {
 
     @Test fun placingOverTheNextNoteStopsBeforeItEvenOnAnotherPitch() {
         val steps = listOf(rest(0), rest(1), note(2, listOf(67)), tie(3), tie(4), rest(5))
-        val notes = placePianoNotes(decodeNotes(steps, steps.size), listOf(PNote(0, 6, 60)), steps.size)
+        val notes = placePianoNotes(decodeNotes(steps, steps.size), listOf(PNote(0, 6, 60)), steps.size, false)
         val after = apply(steps, notes)
         assertEquals(listOf(PNote(0, 2, 60), PNote(2, 3, 67)), decodeNotes(after, after.size))
         assertEquals(steps.drop(2), after.drop(2))
@@ -164,9 +164,9 @@ class NoteModelTest {
     @Test fun joiningAChordKeepsItsLengthRegardlessOfTheNewNoteLength() {
         val steps = listOf(note(0, listOf(60)), tie(1), tie(2), rest(3), rest(4), rest(5))
         for (length in listOf(1, 6)) {
-            val notes = placePianoNotes(decodeNotes(steps, steps.size), listOf(PNote(0, length, 64)), steps.size)
-            val after = apply(steps, notes)
-            assertEquals(listOf(PNote(0, 3, 60), PNote(0, 3, 64)), decodeNotes(after, after.size))
+            val notes = placePianoNotes(decodeNotes(steps, steps.size), listOf(PNote(0, length, 64)), steps.size, true)
+            val after = apply(steps, notes, true)
+            assertEquals(listOf(PNote(0, 3, 60), PNote(0, 3, 64)), decodeNotes(after, after.size, true))
             assertEquals(steps.drop(1), after.drop(1))
         }
     }
@@ -174,17 +174,17 @@ class NoteModelTest {
     @Test fun stretchingStopsAtAnyNextNoteAndDoesNotAddOneStepOnContact() {
         val steps = listOf(note(0, listOf(60)), tie(1), rest(2), note(3, listOf(64)), tie(4), tie(5))
         val notes = decodeNotes(steps, steps.size)
-        val resized = resizePianoNotes(notes, setOf(noteKey(60, 0)), 1, 20, steps.size)
+        val resized = resizePianoNotes(notes, setOf(noteKey(60, 0)), 1, 20, steps.size, false)
         val after = apply(steps, resized)
         assertEquals(listOf(PNote(0, 3, 60), PNote(3, 3, 64)), decodeNotes(after, after.size))
         assertEquals(steps.drop(3), after.drop(3))
         assertTrue(encodeNotes(after, after.size,
-            resizePianoNotes(resized, setOf(noteKey(60, 0)), 1, 1, after.size))!!.isEmpty())
+            resizePianoNotes(resized, setOf(noteKey(60, 0)), 1, 1, after.size, false))!!.isEmpty())
     }
 
     @Test fun shorteningOneChordPitchShortensTheSharedTieTail() {
         val steps = listOf(note(0, listOf(60, 64)), tie(1), tie(2), tie(3), rest(4))
-        val resized = resizePianoNotes(decodeNotes(steps, steps.size), setOf(noteKey(64, 0)), 1, -2, steps.size)
+        val resized = resizePianoNotes(decodeNotes(steps, steps.size), setOf(noteKey(64, 0)), 1, -2, steps.size, false)
         val after = apply(steps, resized)
         assertEquals(listOf(note(0, listOf(60, 64)), tie(1), rest(2), rest(3), rest(4)), after)
         assertEquals(listOf(PNote(0, 2, 60), PNote(0, 2, 64)), decodeNotes(after, after.size))
@@ -192,7 +192,7 @@ class NoteModelTest {
 
     @Test fun shorteningARecordedChordOnlyWritesItsTieTail() {
         val steps = listOf(note(0, listOf(60)), note(1, listOf(60, 64), CONT0 or 1), tie(2), tie(3), rest(4))
-        val resized = resizePianoNotes(decodeNotes(steps, steps.size), setOf(noteKey(64, 1)), 1, -1, steps.size)
+        val resized = resizePianoNotes(decodeNotes(steps, steps.size), setOf(noteKey(64, 1)), 1, -1, steps.size, false)
         assertEquals(listOf(rest(3)), encodeNotes(steps, steps.size, resized))
         val after = apply(steps, resized)
         assertEquals(steps[1], after[1])
@@ -203,27 +203,48 @@ class NoteModelTest {
         val notes = listOf(PNote(0, 2, 60), PNote(0, 2, 64), PNote(3, 2, 67))
         val keys = setOf(noteKey(60, 0), noteKey(67, 3))
         assertEquals(listOf(PNote(0, 3, 60), PNote(0, 3, 64), PNote(3, 3, 67)),
-            resizePianoNotes(notes, keys, 1, 10, 8))
-        assertEquals(notes, resizePianoNotes(notes, keys, 1, 0, 8))
+            resizePianoNotes(notes, keys, 1, 10, 8, false))
+        assertEquals(notes, resizePianoNotes(notes, keys, 1, 0, 8, false))
     }
 
-    @Test fun leftResizeMovesTheWholeChordWithoutOverlappingThePreviousChord() {
-        val notes = listOf(PNote(0, 2, 60), PNote(4, 3, 64), PNote(4, 3, 67))
-        assertEquals(listOf(PNote(0, 2, 60), PNote(2, 5, 64), PNote(2, 5, 67)),
-            resizePianoNotes(notes, setOf(noteKey(64, 4)), -1, -4, 8))
+    @Test fun polyLeftResizeSlidesUnderThePreviousTailAndMergesAtItsStart() {
+        val notes = listOf(PNote(0, 3, 60), PNote(4, 3, 64), PNote(4, 3, 67))
+        assertEquals(listOf(PNote(0, 3, 60), PNote(1, 6, 64), PNote(4, 3, 67)),
+            resizePianoNotes(notes, setOf(noteKey(64, 4)), -1, -3, 8, true))
+        assertEquals(listOf(PNote(0, 3, 60), PNote(0, 7, 64), PNote(4, 3, 67)),
+            resizePianoNotes(notes, setOf(noteKey(64, 4)), -1, -9, 8, true))
+    }
+
+    @Test fun monoLeftResizeStopsAfterThePreviousNote() {
+        val notes = listOf(PNote(0, 3, 60), PNote(4, 3, 64), PNote(4, 3, 67))
+        assertEquals(listOf(PNote(0, 3, 60), PNote(3, 4, 64), PNote(3, 4, 67)),
+            resizePianoNotes(notes, setOf(noteKey(64, 4)), -1, -3, 8, false))
+    }
+
+    @Test fun slidingTheLeftEdgeUnderATailCutsItOnTheDevice() {
+        val steps = listOf(note(0, listOf(60)), tie(1), tie(2), rest(3),
+            note(4, listOf(64)), tie(5), tie(6), rest(7))
+        val notes = resizePianoNotes(decodeNotes(steps, 8), setOf(noteKey(64, 4)), -1, -3, 8, true)
+        assertEquals(listOf(note(1, listOf(64)), tie(3), tie(4)),
+            encodeNotes(steps, 8, notes, true))
+        assertEquals(listOf(PNote(0, 1, 60), PNote(1, 6, 64)), decodeNotes(apply(steps, notes, true), 8))
     }
 
     @Test fun moveAndCopyIntoATailUseTheSamePlacementRules() {
         val steps = listOf(note(0, listOf(60)), tie(1), tie(2), tie(3), rest(4), note(5, listOf(64)), tie(6), rest(7))
         val notes = decodeNotes(steps, steps.size)
+        // a single-voice track refuses the overlap and lands at the nearest free spot
+        assertEquals(listOf(PNote(0, 4, 60), PNote(4, 2, 64)),
+            movePianoNotes(notes, setOf(noteKey(64, 5)), -3, 0, false, steps.size, false).sortedBy { it.start })
+        // POLY lands inside the tail: the device releases the held pitch at the attack
         for (copy in listOf(false, true)) {
-            val moved = movePianoNotes(notes, setOf(noteKey(64, 5)), -3, 0, copy, steps.size)
-            val after = apply(steps, moved)
+            val moved = movePianoNotes(notes, setOf(noteKey(64, 5)), -3, 0, copy, steps.size, true)
+            val after = apply(steps, moved, true)
             val expected = listOf(PNote(0, 2, 60), PNote(2, 2, 64)) +
                 if (copy) listOf(PNote(5, 2, 64)) else emptyList()
-            assertEquals(expected, decodeNotes(after, after.size))
+            assertEquals(expected.toSet(), decodeNotes(after, after.size, true).toSet())
             assertEquals(listOf(64), after[2].notes.take(after[2].n))
-            assertTrue(after.all { it.flags and 2 == 0 })
+            assertTrue(after.all { it.flags and CONT_ALL == 0 })
         }
     }
 
@@ -239,7 +260,7 @@ class NoteModelTest {
     @Test fun orphanTiesCannotLengthenANewNote() {
         val steps = listOf(rest(0), tie(1), tie(2), rest(3), note(4, listOf(67)))
         assertTrue(encodeNotes(steps, steps.size, decodeNotes(steps, steps.size))!!.isEmpty())
-        val after = apply(steps, placePianoNotes(decodeNotes(steps, steps.size), listOf(PNote(0, 1, 60)), steps.size))
+        val after = apply(steps, placePianoNotes(decodeNotes(steps, steps.size), listOf(PNote(0, 1, 60)), steps.size, false))
         assertEquals(listOf(note(0, listOf(60)), rest(1), rest(2), rest(3), steps[4]), after)
     }
 
@@ -253,8 +274,8 @@ class NoteModelTest {
     @Test fun fivePitchesAreRejectedAsOneEditAndRoundTripKeepsStepPositions() {
         val steps = listOf(note(0, listOf(60, 64, 67, 72)), tie(1), rest(2))
         val notes = decodeNotes(steps, steps.size)
-        assertNull(encodeNotes(steps, steps.size, placePianoNotes(notes, listOf(PNote(0, 1, 76)), steps.size)))
-        val shorter = resizePianoNotes(notes, setOf(noteKey(60, 0)), 1, -1, steps.size)
+        assertNull(encodeNotes(steps, steps.size, placePianoNotes(notes, listOf(PNote(0, 1, 76)), steps.size, true), true))
+        val shorter = resizePianoNotes(notes, setOf(noteKey(60, 0)), 1, -1, steps.size, false)
         val after = apply(steps, shorter)
         assertEquals(steps, apply(after, notes)) // the reverse edit restores the original NOTE + TIE steps
     }
@@ -278,21 +299,21 @@ class NoteModelTest {
         val steps = lateRelease()
         val notes = decodeNotes(steps, steps.size)
         assertTrue(encodeNotes(steps, steps.size,
-            resizePianoNotes(notes, setOf(noteKey(66, 0)), 1, 5, steps.size))!!.isEmpty())
+            resizePianoNotes(notes, setOf(noteKey(66, 0)), 1, 5, steps.size, false))!!.isEmpty())
     }
 
     @Test fun editsElsewhereKeepTheRawContinuationStep() {
         val steps = lateRelease()
-        val notes = placePianoNotes(decodeNotes(steps, steps.size), listOf(PNote(6, 1, 70)), steps.size)
+        val notes = placePianoNotes(decodeNotes(steps, steps.size), listOf(PNote(6, 1, 70)), steps.size, false)
         assertEquals(listOf(6), encodeNotes(steps, steps.size, notes)!!.map { it.index })
     }
 
     @Test fun editingTheReleasedNoteDropsItsHiddenContinuation() {
         val steps = lateRelease()
         val notes = decodeNotes(steps, steps.size)
-        val shorter = resizePianoNotes(notes, setOf(noteKey(66, 0)), 1, -1, steps.size)
+        val shorter = resizePianoNotes(notes, setOf(noteKey(66, 0)), 1, -1, steps.size, false)
         assertEquals(listOf(rest(2), note(3, listOf(58))), encodeNotes(steps, steps.size, shorter))
-        val moved = movePianoNotes(notes, setOf(noteKey(66, 0)), 0, 1, false, steps.size)
+        val moved = movePianoNotes(notes, setOf(noteKey(66, 0)), 0, 1, false, steps.size, false)
         val after = apply(steps, moved)
         assertEquals(note(3, listOf(58)), after[3])
         assertEquals(listOf(PNote(0, 3, 67), PNote(3, 3, 58)), decodeNotes(after, after.size))
@@ -319,5 +340,105 @@ class NoteModelTest {
         assertEquals(listOf(PNote(15, 1, 60)), quantizePianoNotes(listOf(PNote(15, 3, 60)), null, 1.0, 16))
         val q = quantizePianoNotes(listOf(PNote(15, 2, 60)), null, 4.0, 16)
         assertEquals(listOf(PNote(15, 1, 60)), q) // rounds to 16, clamped to the last step
+    }
+}
+
+// ---- voice-mode-aware behaviour (SLOOP 2.7 V_POLY vs single-voice modes) ----
+class VoiceModeTest {
+    private fun note(i: Int, pitches: List<Int>, flags: Int = 0) =
+        Step(i, pitches.size, IntArray(4) { pitches.getOrElse(it) { 0 } }, StepTime.NOTE, flags, 96)
+
+    private fun rest(i: Int) = Step(i, 0, IntArray(4), StepTime.REST, 0, 0)
+    private fun tie(i: Int) = rest(i).copy(time = StepTime.TIE)
+
+    private fun apply(steps: List<Step>, notes: List<PNote>, poly: Boolean): List<Step> =
+        steps.toMutableList().also { out ->
+            encodeNotes(steps, steps.size, notes, poly)!!.forEach { out[it.index] = it }
+        }
+
+    /** 60 held under 64's attack, then alone once more (the recorder's POLY chain). */
+    private fun recordedOverlap() = listOf(
+        note(0, listOf(60)),
+        note(1, listOf(60, 64), CONT0),
+        note(2, listOf(60), CONT0),
+        rest(3),
+        rest(4),
+    )
+
+    @Test fun polyDecodeDrawsTrueOverlappingBars() {
+        val steps = recordedOverlap()
+        assertEquals(setOf(PNote(0, 3, 60), PNote(1, 1, 64)),
+            decodeNotes(steps, steps.size, true).toSet())
+        assertTrue(encodeNotes(steps, steps.size, decodeNotes(steps, steps.size, true), true)!!.isEmpty())
+    }
+
+    @Test fun polyMoveInsideATailDrawsTheOverlapButTheDeviceCutsIt() {
+        val steps = listOf(note(0, listOf(60)), tie(1), tie(2), tie(3), rest(4),
+            note(5, listOf(64)), tie(6), rest(7))
+        val all = decodeNotes(steps, steps.size, true)
+        val moved = movePianoNotes(all, setOf(noteKey(64, 5)), -3, 0, false, steps.size, true)
+        // The intent keeps both bars as placed; nothing merges or clips on screen.
+        assertEquals(listOf(PNote(0, 4, 60), PNote(2, 2, 64)), moved)
+        val after = apply(steps, moved, true)
+        // On the device the later attack wins: the held pitch is released, never re-attacked.
+        assertEquals(listOf(64), after[2].notes.take(after[2].n))
+        assertEquals(listOf(PNote(0, 2, 60), PNote(2, 2, 64)), decodeNotes(after, after.size, true))
+        assertTrue(after.all { it.flags and CONT_ALL == 0 })
+    }
+
+    @Test fun polySamePitchCannotOverlapItself() {
+        val notes = listOf(PNote(0, 3, 60), PNote(5, 2, 60))
+        assertEquals(listOf(PNote(0, 3, 60), PNote(3, 2, 60)),
+            movePianoNotes(notes, setOf(noteKey(60, 5)), -3, 0, false, 8, true))
+        // a different pitch lands freely inside the span
+        assertEquals(listOf(PNote(0, 3, 60), PNote(1, 2, 64)),
+            movePianoNotes(listOf(PNote(0, 3, 60), PNote(5, 2, 64)),
+                setOf(noteKey(64, 5)), -4, 0, false, 8, true))
+    }
+
+    @Test fun monoMoveNeverOverlaps() {
+        val notes = listOf(PNote(0, 2, 60), PNote(5, 2, 64))
+        assertEquals(listOf(PNote(0, 2, 60), PNote(2, 2, 64)),
+            movePianoNotes(notes, setOf(noteKey(64, 5)), -3, 0, false, 8, false))
+        assertEquals(setOf(PNote(3, 2, 60), PNote(5, 2, 64)),
+            movePianoNotes(notes, setOf(noteKey(60, 0)), 6, 0, false, 8, false).toSet())
+    }
+
+    @Test fun monoPlaceReplacesTheOccupiedStep() {
+        val notes = listOf(PNote(0, 3, 60))
+        assertEquals(listOf(PNote(0, 3, 64)),
+            placePianoNotes(notes, listOf(PNote(0, 1, 64)), 8, false))
+        assertEquals(listOf(PNote(0, 3, 60), PNote(0, 3, 64)),
+            placePianoNotes(notes, listOf(PNote(0, 1, 64)), 8, true))
+    }
+
+    @Test fun polyRecordedChainSurvivesUnrelatedEditsAndResizes() {
+        val steps = recordedOverlap() + rest(5)
+        // drawing it back unchanged: nothing is rewritten
+        assertTrue(encodeNotes(steps, 6, decodeNotes(steps, 6, true), true)!!.isEmpty())
+        // shortening the held bar to end inside the chain: the kept CONT step still holds it
+        val resized = resizePianoNotes(decodeNotes(steps, 6, true), setOf(noteKey(60, 0)), 1, -1, 6, true)
+        assertEquals(listOf(rest(2)), encodeNotes(steps, 6, resized, true))
+        val after = apply(steps, resized, true)
+        assertEquals(setOf(PNote(0, 2, 60), PNote(1, 1, 64)), decodeNotes(after, 6, true).toSet())
+        assertEquals(steps[1], after[1])
+    }
+
+    @Test fun polyEdgeBoundsAreFreeAndMonoOnesBlock() {
+        val sel = listOf(PNote(4, 3, 64))
+        val others = listOf(PNote(0, 3, 60), PNote(7, 1, 72))
+        assertEquals(-2 to 1, resizeDeltaBounds(sel, others, 8, 1, true))
+        assertEquals(-2 to 0, resizeDeltaBounds(sel, others, 8, 1, false))
+        assertEquals(-4 to 2, resizeDeltaBounds(sel, others, 8, -1, true))
+        assertEquals(-1 to 2, resizeDeltaBounds(sel, others, 8, -1, false))
+    }
+
+    @Test fun polyResizeMovesOnlyTheSelectedBar() {
+        val notes = listOf(PNote(0, 4, 60), PNote(0, 3, 64))
+        assertEquals(listOf(PNote(0, 4, 60), PNote(1, 2, 64)),
+            resizePianoNotes(notes, setOf(noteKey(64, 0)), -1, 1, 8, true))
+        // the same drag on a single-voice track resizes the whole chord
+        assertEquals(listOf(PNote(1, 3, 60), PNote(1, 2, 64)),
+            resizePianoNotes(notes, setOf(noteKey(64, 0)), -1, 1, 8, false))
     }
 }

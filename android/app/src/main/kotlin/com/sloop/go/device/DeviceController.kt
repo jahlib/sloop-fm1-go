@@ -125,9 +125,10 @@ class DeviceController(context: Context) {
     private class SlicerHold(val connection: MidiConnection, val values: Map<Int, Int>)
     private val heldSlicers = HashMap<Int, SlicerHold>()
 
-    // params.c: SLCR=STUT (2), PAT=16, RATE=1/16 (1), DEPTH=100% (127).
-    // Configure the pattern/rate/depth before enabling STUT; restore mode last too.
-    private val stutterParams = listOf(46 to 16, 47 to 1, 48 to 127, 45 to 2)
+    // params.c: SLCR=STUT (2), PAT=16, DEPTH=100% (127). RATE (47) is left alone:
+    // STU keeps whatever rate the track already has instead of forcing 1/16.
+    // Configure the pattern/depth before enabling STUT; restore mode last too.
+    private val stutterParams = listOf(46 to 16, 48 to 127, 45 to 2)
 
     init {
         scope.launch { editWorker() }
@@ -246,6 +247,8 @@ class DeviceController(context: Context) {
                 onNote = { ch, note, on ->
                     _live.update { it.with(ch, note, on) }
                     recordingTrace.note(ch, note, on)
+                    // Recording: all keys up means the just-played phrase is written — read it soon.
+                    if (!on && recordingActive() && !_live.value.anyHeld()) scheduleResync(300)
                 })
             if (c == null) {
                 _state.update { it.copy(link = Link.DISCONNECTED, status = "Could not open device") }
@@ -370,7 +373,8 @@ class DeviceController(context: Context) {
                 ds.add(Parse.drumStep(request(Requests.drumStepGet(i))))
             }
             _state.update { if (!current(it)) it
-                else it.copy(drumSteps = ds, steps = emptyList()).withQueuedEdits().withDraft() }
+                else it.copy(drumSteps = ds, steps = emptyList(), intentNotes = null)
+                    .withQueuedEdits().withDraft() }
         } else {
             val st = ArrayList<Step>(info.nstep)
             for (i in 0 until info.nstep) {
@@ -379,7 +383,8 @@ class DeviceController(context: Context) {
                     else Parse.step(request(Requests.stepGet(i))))
             }
             _state.update { if (!current(it)) it
-                else it.copy(steps = st, drumSteps = emptyList()).withQueuedEdits().withDraft() }
+                else it.copy(steps = st, drumSteps = emptyList(), intentNotes = null)
+                    .withQueuedEdits().withDraft() }
         }
     }
 
@@ -494,10 +499,24 @@ class DeviceController(context: Context) {
         scope.launch { runCatching { applyLive(Parse.live(request(Requests.liveDrumSound(lane, tune, decay)))) } }
     }
 
+    /** True while the device records [track] live (LIVE's per-track rec bits, plus the armed/waiting states). */
+    private fun recordingTrack(track: Int): Boolean {
+        val lv = _transport.value ?: return false
+        return lv.freeTake || lv.recWait || (lv.recs and (1 shl track)) != 0
+    }
+
+    /** True while any track is being recorded (covers the track-less drum edits). */
+    private fun recordingActive(): Boolean =
+        _transport.value?.let { it.freeTake || it.recWait || it.recs != 0 } == true
+
     /** A LIVE reply: the transport button follows the device (while a PLAY / STOP is still pending, the last answer holds). */
     private fun applyLive(lv: Live) {
         clock.feed(lv, System.nanoTime() / 1e9)
+        val wasRecording = _transport.value?.let { it.freeTake || it.recWait || it.recs != 0 } == true
         _transport.value = lv
+        // Step writes held back while a track recorded go out now.
+        if (wasRecording && !(lv.freeTake || lv.recWait || lv.recs != 0) &&
+            synchronized(pendingLock) { edits.isNotEmpty() && !sending }) editSignal.trySend(Unit)
         _state.update { s ->
             val play = if (lv.playAsked) s.playing else lv.playing
             if (s.playing == play) s else s.copy(playing = play)
@@ -875,13 +894,18 @@ class DeviceController(context: Context) {
         val s = _state.value
         if (s.link != Link.READY || s.isDrum) return false
         val len = s.patternLength
-        val transformed = transform(s, decodeNotes(s.steps, len)) ?: return false
-        val changed = encodeNotes(s.steps, len, transformed)
+        val transformed = transform(s, s.drawnNotes) ?: return false
+        val changed = encodeNotes(s.steps, len, transformed, s.voicePoly)
         if (changed == null) {
             showEditNotice("Four notes maximum per step")
             return false
         }
-        return changed.isNotEmpty() && applySynthBatch(changed.map { UserEdit.Synth(s.selectedTrack, it.index, it) })
+        if (changed.isEmpty()) {
+            if (transformed != s.drawnNotes) _state.update { it.copy(intentNotes = transformed) }
+            return false
+        }
+        return applySynthBatch(changed.map { UserEdit.Synth(s.selectedTrack, it.index, it) },
+            intent = transformed)
     }
 
     /** Adds a note of [len] steps at [index], or removes the note of that pitch sounding there. */
@@ -890,30 +914,31 @@ class DeviceController(context: Context) {
         editNotes { s, notes ->
             val hit = notes.firstOrNull { it.pitch == note && index in it.start..it.end }
             if (hit != null) notes - hit else {
-                placePianoNotes(notes, listOf(PNote(index, len.coerceAtLeast(1), note)), s.patternLength)
+                placePianoNotes(notes, listOf(PNote(index, len.coerceAtLeast(1), note)), s.patternLength, s.voicePoly)
             }
         }
     }
 
     /**
      * Moves (or, with [copy], clones) the notes named by [keys] ([noteKey]) as one group by [dStep] steps and [dPitch]
-     * semitones; the group is clamped to stay inside the pattern and 0..127. Landing on a NOTE joins its chord;
-     * landing inside a TIE cuts that tail. One batch through the normal edit queue.
+     * semitones; the group is clamped to stay inside the pattern and 0..127. On POLY different pitches may overlap
+     * (the device writes the closest shape and the drawn intent keeps the overlap); on a single-voice track the
+     * shift stops before overlapping another note. One batch through the normal edit queue.
      */
     fun placeNotes(keys: Set<Int>, dStep: Int, dPitch: Int, copy: Boolean): Boolean =
         editNotes { s, notes ->
-            movePianoNotes(notes, keys, dStep, dPitch, copy, s.patternLength)
+            movePianoNotes(notes, keys, dStep, dPitch, copy, s.patternLength, s.voicePoly)
         }
 
     /** Quantizes note starts to [grid] steps, keeping lengths: the notes named by [keys], or all notes when
      * [keys] is empty. Returns the selection's new keys, or null if nothing was sent. */
     fun quantizeNotes(keys: Set<Int>, grid: Double): Set<Int>? {
         val s = _state.value
-        val notes = decodeNotes(s.steps, s.patternLength)
+        val notes = s.drawnNotes
         val target = keys.takeIf { it.isNotEmpty() }
         val after = quantizePianoNotes(notes, target, grid, s.patternLength)
         if (after == notes || !editNotes { _, _ -> after }) return null
-        val stored = decodeNotes(_state.value.steps, s.patternLength).map { noteKey(it.pitch, it.start) }.toSet()
+        val stored = _state.value.drawnNotes.map { noteKey(it.pitch, it.start) }.toSet()
         return if (target == null) emptySet()
         else notes.zip(after).filter { (n, _) -> noteKey(n.pitch, n.start) in keys }
             .map { (_, q) -> noteKey(q.pitch, q.start) }.filter { it in stored }.toSet()
@@ -947,15 +972,15 @@ class DeviceController(context: Context) {
     fun transposeSelectedNotes(keys: Set<Int>, delta: Int): Set<Int>? {
         val s = _state.value
         if (s.link != Link.READY || s.isDrum || s.sequencerMode != SequencerMode.NOW || delta == 0) return null
-        val selected = decodeNotes(s.steps, s.patternLength).filter { noteKey(it.pitch, it.start) in keys }
+        val selected = s.drawnNotes.filter { noteKey(it.pitch, it.start) in keys }
         if (selected.isEmpty()) return null
-        val allStored = decodeNotes(s.steps, s.nstep)
+        val allStored = s.drawnNotes
         val accepted = if ((s.info?.proto ?: 0) >= 12 &&
             allStored.all { noteKey(it.pitch, it.start) in keys }) {
             // Selecting every stored note can use the whole-track command, including CONT.
             transposeOnDevice(s, delta)
         } else {
-            val after = transposeSelectedSteps(s.steps, s.patternLength, keys, delta)
+            val after = transposeSelectedSteps(s.steps, s.patternLength, keys, delta, s.voicePoly)
             if (after == null) {
                 showEditNotice("Transpose cancelled: note range or duplicate pitch in chord")
                 return null
@@ -1015,7 +1040,7 @@ class DeviceController(context: Context) {
     fun resizeNote(start: Int, pitch: Int, requestedLength: Int) {
         editNotes { s, notes ->
             val n = notes.firstOrNull { it.pitch == pitch && it.start == start } ?: return@editNotes null
-            resizePianoNotes(notes, setOf(noteKey(pitch, start)), 1, requestedLength - n.len, s.patternLength)
+            resizePianoNotes(notes, setOf(noteKey(pitch, start)), 1, requestedLength - n.len, s.patternLength, s.voicePoly)
         }
     }
 
@@ -1025,20 +1050,21 @@ class DeviceController(context: Context) {
      */
     fun resizeNotes(keys: Set<Int>, edge: Int, delta: Int): Boolean =
         editNotes { s, notes ->
-            resizePianoNotes(notes, keys, edge, delta, s.patternLength)
+            resizePianoNotes(notes, keys, edge, delta, s.patternLength, s.voicePoly)
         }
 
     /** Resizes every note that starts at [index] (a chord shares one duration in the step editor). */
     fun setNoteLength(index: Int, requestedLength: Int) {
         editNotes { s, notes ->
             val n = notes.firstOrNull { it.start == index } ?: return@editNotes null
-            resizePianoNotes(notes, setOf(noteKey(n.pitch, index)), 1, requestedLength - n.len, s.patternLength)
+            resizePianoNotes(notes, setOf(noteKey(n.pitch, index)), 1, requestedLength - n.len, s.patternLength, s.voicePoly)
         }
     }
 
     /** STEP_SET cannot carry SF_CONT (SLOOP 2.7). Match the stored reply flags locally;
      * length edits normally write only TIE/REST steps and leave the NOTE flags untouched. */
-    private fun applySynthBatch(requested: List<UserEdit.Synth>, record: Boolean = true): Boolean {
+    private fun applySynthBatch(requested: List<UserEdit.Synth>, record: Boolean = true,
+                                intent: List<PNote>? = null): Boolean {
         val batch = requested.map { e ->
             if (e.step.hasContinuations()) e.copy(step = e.step.copy(flags = e.step.flags and CONT_ALL.inv())) else e
         }
@@ -1057,7 +1083,7 @@ class DeviceController(context: Context) {
         if (s.sequencerMode == SequencerMode.LATE) synchronized(draftLock) { draftSynth[s.selectedTrack] = list }
         _state.update { current ->
             if (current.selectedTrack != s.selectedTrack) current else current.copy(steps = list,
-                draftTracks = draftIds())
+                draftTracks = draftIds(), intentNotes = intent)
         }
         return true
     }
@@ -1193,7 +1219,7 @@ class DeviceController(context: Context) {
                 val d = s.drumSteps.getOrNull(i) ?: return@flatMap emptyList()
                 (0 until 16).filter { (d.on shr it) and 1 == 1 }.map { ClipNote(i, 1, it, Smf.lvlVel(d.lvl[it])) }
             })
-            !s.isDrum -> Clip(ClipKind.PIANO, len, decodeNotes(s.steps, len).map { ClipNote(it.start, it.len, it.pitch, 100) })
+            !s.isDrum -> Clip(ClipKind.PIANO, len, s.drawnNotes.map { ClipNote(it.start, it.len, it.pitch, 100) })
             else -> null
         }
     }
@@ -1259,7 +1285,7 @@ class DeviceController(context: Context) {
             if (src.isEmpty()) return@editNotes null
             val ds = dStep.coerceIn(-src.minOf { it.start }, s.patternLength - 1 - src.maxOf { it.end })
             val dp = dPitch.coerceIn(-src.minOf { it.pitch }, 127 - src.maxOf { it.pitch })
-            placePianoNotes(notes, src.map { it.copy(start = it.start + ds, pitch = it.pitch + dp) }, s.patternLength)
+            placePianoNotes(notes, src.map { it.copy(start = it.start + ds, pitch = it.pitch + dp) }, s.patternLength, s.voicePoly)
         }
     }
 
@@ -1415,8 +1441,16 @@ class DeviceController(context: Context) {
         for (unit in editSignal) {
             while (true) {
                 val next = synchronized(pendingLock) {
-                    if (queuePaused || edits.isEmpty()) null
-                    else (edits.first() to editGeneration).also { sending = true }
+                    val e = edits.firstOrNull()
+                    // A step write into a track being recorded would fight the live recorder's chains.
+                    val blocked = when (e) {
+                        is UserEdit.Synth -> recordingTrack(e.track)
+                        is UserEdit.Transpose -> recordingTrack(e.track)
+                        is UserEdit.Drum -> recordingActive()
+                        else -> false
+                    }
+                    if (queuePaused || e == null || blocked) null
+                    else (e to editGeneration).also { sending = true }
                 } ?: break
                 val result = runCatching { sendEdit(next.first) }
                 val current = synchronized(pendingLock) {
@@ -1485,7 +1519,7 @@ class DeviceController(context: Context) {
             check(after == edit.after) { "pattern changed during transpose" }
             _state.update { s ->
                 if (conn !== connection || s.selectedTrack != edit.track) s
-                else s.copy(steps = after).withQueuedEdits().withDraft()
+                else s.copy(steps = after, intentNotes = null).withQueuedEdits().withDraft()
             }
         } finally {
             // Ignore the delayed RELOAD caused by our own commands. The steps above
@@ -1545,7 +1579,7 @@ class DeviceController(context: Context) {
         val drum = synchronized(draftLock) { draftDrum[selectedTrack] }
         return when {
             drumGrid && drum != null -> copy(drumSteps = drum)
-            !drumGrid && synth != null -> copy(steps = synth)
+            !drumGrid && synth != null -> copy(steps = synth, intentNotes = null)
             else -> this
         }
     }
@@ -1560,7 +1594,7 @@ class DeviceController(context: Context) {
                 is UserEdit.Synth -> if (edit.track == current.selectedTrack && edit.index in current.steps.indices)
                     current.copy(steps = current.steps.toMutableList().also { it[edit.index] = edit.step }) else current
                 is UserEdit.Transpose -> if (edit.track == current.selectedTrack)
-                    current.copy(steps = edit.after) else current
+                    current.copy(steps = edit.after, intentNotes = null) else current
                 is UserEdit.Drum -> if (current.drumGrid && edit.index in current.drumSteps.indices)
                     current.copy(drumSteps = current.drumSteps.toMutableList().also { it[edit.index] = edit.step }) else current
             }
@@ -1628,7 +1662,10 @@ class DeviceController(context: Context) {
                 val sc = Parse.stepChanged(args)
                 if (nativeTransposeTrack == sc.track) return
                 if (sc.track != _state.value.selectedTrack) return
-                scope.launch { runCatching { reloadOneStep(sc.index, sc.track) } }
+                // While the device records, a pushed step can be read mid-chain (a pure-CONT NOTE
+                // before the attack carrying it): take one clean full read once pushes settle.
+                if (!recordingTrack(sc.track))
+                    scope.launch { runCatching { reloadOneStep(sc.index, sc.track) } }
                 scheduleResync()
             }
             Cmd.TRACK_CHANGED -> {
@@ -1714,10 +1751,10 @@ class DeviceController(context: Context) {
      * stale if a read lost a race. Once the pushes stop for a moment, the whole track is read again and the roll shows what the
      * device holds.
      */
-    private fun scheduleResync() {
+    private fun scheduleResync(delayMs: Long = 1200) {
         resyncJob?.cancel()
         resyncJob = scope.launch {
-            delay(1200)
+            delay(delayMs)
             val s = _state.value
             val info = s.info ?: return@launch
             val dump = s.dump ?: return@launch
@@ -1751,8 +1788,9 @@ class DeviceController(context: Context) {
             _state.update { st ->
                 if (conn !== connection || st.selectedTrack != track || st.link != Link.READY ||
                     st.steps.getOrNull(index) != s.steps.getOrNull(index)) return@update st
+                if (st.steps.getOrNull(index) == step) return@update st
                 val l = st.steps.toMutableList(); if (index < l.size) l[index] = step
-                st.copy(steps = l).withQueuedEdits().withDraft() }
+                st.copy(steps = l, intentNotes = null).withQueuedEdits().withDraft() }
         }
         // v7+: a step's signature covers its nudge, locks and fill — the push may mean one of them changed
         if (info.proto >= 7 && conn === connection && _state.value.selectedTrack == track &&

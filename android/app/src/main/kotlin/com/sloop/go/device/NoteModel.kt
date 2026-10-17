@@ -7,9 +7,9 @@ import com.sloop.go.proto.Step
 import com.sloop.go.proto.StepTime
 
 /**
- * One pitch of a stored NOTE step, followed by [len] - 1 TIE steps. All pitches at the same
- * start share a length. This is the web editor's ROLL model, not a reconstruction of voice
- * envelopes: SLIDE and CONT affect playback but never hide a stored NOTE boundary.
+ * One pitch's sounding span. On a POLY track bars may overlap (a pitch CONT'd at a later NOTE
+ * keeps sounding under it); on MONO/LEGATO/UNISON they never do. CONT affects playback but a
+ * step-set write can never carry it, so written overlaps degrade to honest NOTE steps.
  */
 data class PNote(val start: Int, val len: Int, val pitch: Int) {
     val end: Int get() = start + len - 1
@@ -18,41 +18,86 @@ data class PNote(val start: Int, val len: Int, val pitch: Int) {
 /** A note's identity inside one pattern (pitch + first step), stable while the note is only moved or cut at its end. */
 fun noteKey(pitch: Int, start: Int): Int = pitch * 1024 + start
 
-/** Bounds for resizing whole chords. A right edge stops at the next NOTE after its end;
- * a left edge cannot cross the previous chord's end. Selected neighbours count too. */
-fun resizeDeltaBounds(sel: List<PNote>, others: List<PNote>, length: Int, edge: Int): Pair<Int, Int> {
+/** Bounds for resizing. On POLY a right edge runs free to the pattern end (crossing a NOTE makes
+ * the device release this bar there) and a left edge slides under tails down to the previous
+ * same-pitch attack, where the bars merge. On a single-voice track neither may cross another note:
+ * the right edge still stops at the next NOTE and the left edge stops after the previous note's end. */
+fun resizeDeltaBounds(sel: List<PNote>, others: List<PNote>, length: Int, edge: Int, poly: Boolean): Pair<Int, Int> {
     if (sel.isEmpty()) return 0 to 0
     val all = sel + others
     var lo = Int.MIN_VALUE
     var hi = Int.MAX_VALUE
-    for (n in sel.distinctBy { it.start }) {
+    for (n in sel) {
         if (edge > 0) {
-            val maxEnd = all.filter { it.start > n.end }
-                .minOfOrNull { it.start - 1 } ?: (length - 1)
+            val maxEnd = if (poly) length - 1
+                else all.filter { it.start > n.end }.minOfOrNull { it.start - 1 } ?: (length - 1)
             lo = maxOf(lo, 1 - n.len); hi = minOf(hi, maxEnd - n.end)
         } else {
-            val minStart = all.filter { it.start < n.start }
-                .maxOfOrNull { minOf(it.end, n.start - 1) + 1 } ?: 0
+            // POLY: free down to the previous same-pitch bar's start (it merges there — a pitch
+            // cannot overlap itself). Single-voice: stop after the previous note's end.
+            val minStart = if (poly)
+                all.filter { it.start < n.start && it.pitch == n.pitch }.maxOfOrNull { it.start } ?: 0
+                else (all.filter { it.end < n.start }.maxOfOrNull { it.end } ?: -1) + 1
             lo = maxOf(lo, minStart - n.start); hi = minOf(hi, n.len - 1)
         }
     }
     return lo to hi
 }
 
-/** Canonical NOTE + TIE chords. New starts cut preceding tails; a cut tail never resumes.
- * Used for imported clips too. Voice mode changes sound, not the stored sequence. */
-fun normalizeNotes(notes: List<PNote>, length: Int): List<PNote> {
+/** The nearest shift to [ds] at which no selected span intersects another note's span. With
+ * [samePitchDp] only notes the shift lands on the same pitch count (a pitch cannot overlap itself). */
+private fun clampShiftNoOverlap(selected: List<PNote>, others: List<PNote>, ds: Int,
+                                samePitchDp: Int? = null): Int {
+    var d = ds
+    repeat(16) {
+        var moved = false
+        for (m in selected) for (o in others) {
+            if (samePitchDp != null && m.pitch + samePitchDp != o.pitch) continue
+            if (m.start + d <= o.end && m.end + d >= o.start) {
+                d = if (ds > 0) minOf(d, o.start - m.end - 1) else maxOf(d, o.end - m.start + 1)
+                moved = true
+            }
+        }
+        if (!moved) return d
+    }
+    return d
+}
+
+/** A pitch's bar may pass step [j] on the device only if the stored step CONT-carries it:
+ * a NOTE step's slot flagged for it (the live recorder's overlap chains). */
+private fun hasCont(st: Step?, pitch: Int): Boolean {
+    if (st == null || st.time != StepTime.NOTE) return false
+    val k = st.notes.take(st.n.coerceIn(0, 4)).indexOf(pitch)
+    return k >= 0 && st.flags and (CONT0 shl k) != 0
+}
+
+/** Canonical writable form. On a single-voice track every chord shares one tail clipped at the next
+ * NOTE (the web editor's ROLL model). On POLY each drawn bar keeps its own span and is cut only at a
+ * drawn attack the stored step does not CONT-carry it through: the attack's written NOTE releases
+ * it — the honest device-side shape of an overlap a step write cannot express. */
+fun normalizeNotes(notes: List<PNote>, length: Int, poly: Boolean, old: List<Step> = emptyList()): List<PNote> {
     val groups = notes.filter { it.start in 0 until length && it.pitch in 0..127 && it.len > 0 }
         .groupBy { it.start }.toSortedMap().entries.toList()
-    return groups.flatMapIndexed { i, (start, chord) ->
+    if (!poly) return groups.flatMapIndexed { i, (start, chord) ->
         val next = groups.getOrNull(i + 1)?.key ?: length
         val duration = minOf(chord.maxOf { it.len }, next - start)
         chord.distinctBy { it.pitch }.map { it.copy(len = duration) }
     }
+    val newStarts = groups.map { it.key }.toSet()
+    return groups.flatMap { (start, chord) ->
+        chord.distinctBy { it.pitch }.map { n ->
+            // A drawn attack releases every drawn-through pitch the stored step does not CONT-carry:
+            // the only writable forms are the release itself or a re-attack, and the release is honest.
+            var end = n.end.coerceAtMost(length - 1)
+            var j = n.start + 1
+            while (j <= end && !(j in newStarts && !hasCont(old.getOrNull(j), n.pitch))) j++
+            n.copy(len = if (j <= end) j - n.start else end - n.start + 1)
+        }
+    }
 }
 
 /** Moves the starts of the notes named by [keys] (all notes when null) to the nearest multiple of
- * [grid] steps; lengths are kept. [encodeNotes] still applies NOTE + TIE rules afterwards. */
+ * [grid] steps; lengths are kept. [encodeNotes] still applies the voice mode's rules afterwards. */
 fun quantizePianoNotes(notes: List<PNote>, keys: Set<Int>?, grid: Double, length: Int): List<PNote> {
     if (grid <= 0.0) return notes
     return notes.map { n ->
@@ -64,35 +109,46 @@ fun quantizePianoNotes(notes: List<PNote>, keys: Set<Int>?, grid: Double, length
 }
 
 /** ROLL.place: an existing NOTE keeps its duration when another pitch joins it.
- * Placing inside a TIE starts a new chord; [encodeNotes] cuts the old tail there. */
-fun placePianoNotes(base: List<PNote>, added: List<PNote>, @Suppress("UNUSED_PARAMETER") length: Int): List<PNote> {
+ * Placing inside a span starts a new note there. On a single-voice track the step keeps one
+ * pitch, so a placed note replaces whatever starts there (firmware step_add). */
+fun placePianoNotes(base: List<PNote>, added: List<PNote>, length: Int, poly: Boolean): List<PNote> {
     val durations = base.groupBy { it.start }.mapValues { (_, g) -> g.minOf { it.len } }
     val placed = added.map { n -> durations[n.start]?.let { n.copy(len = it) } ?: n }
-    return base.filter { b -> placed.none { it.start == b.start && it.pitch == b.pitch } } + placed
+    val starts = placed.map { it.start }.toSet()
+    return base.filter { b ->
+        if (poly) placed.none { it.start == b.start && it.pitch == b.pitch } else b.start !in starts
+    } + placed
 }
 
-/** Shared by the controller and drag preview, including copy and partial-chord moves. */
+/** Shared by the controller and drag preview, including copy and partial-chord moves. On POLY the
+ * shifted notes may land anywhere; on a single-voice track the shift stops before overlapping
+ * another note's span. */
 fun movePianoNotes(notes: List<PNote>, keys: Set<Int>, dStep: Int, dPitch: Int,
-                   copy: Boolean, length: Int): List<PNote> {
+                   copy: Boolean, length: Int, poly: Boolean): List<PNote> {
     val selected = notes.filter { noteKey(it.pitch, it.start) in keys }
     if (selected.isEmpty()) return notes
-    val ds = dStep.coerceIn(-selected.minOf { it.start }, length - 1 - selected.maxOf { it.end })
+    var ds = dStep.coerceIn(-selected.minOf { it.start }, length - 1 - selected.maxOf { it.end })
     val dp = dPitch.coerceIn(-selected.minOf { it.pitch }, 127 - selected.maxOf { it.pitch })
+    val others = notes.filter { it !in selected }.let { if (copy) it + selected else it }
+    // POLY: only a same-pitch landing is refused; a single-voice track refuses every overlap.
+    ds = clampShiftNoOverlap(selected, others, ds, if (poly) dp else null)
     if (!copy && ds == 0 && dp == 0) return notes
     return placePianoNotes(if (copy) notes else notes - selected.toSet(),
-        selected.map { it.copy(start = it.start + ds, pitch = it.pitch + dp) }, length)
+        selected.map { it.copy(start = it.start + ds, pitch = it.pitch + dp) }, length, poly)
 }
 
-/** Pulling any pitch's edge resizes its whole stored chord, just like ROLL.resize. */
-fun resizePianoNotes(notes: List<PNote>, keys: Set<Int>, edge: Int, delta: Int, length: Int): List<PNote> {
+/** On a single-voice track pulling any pitch's edge resizes its whole stored chord; on POLY each
+ * drawn bar has its own length and only the selected bars move. */
+fun resizePianoNotes(notes: List<PNote>, keys: Set<Int>, edge: Int, delta: Int, length: Int,
+                     poly: Boolean): List<PNote> {
     if (delta == 0 || edge == 0) return notes
     val starts = notes.filter { noteKey(it.pitch, it.start) in keys }.map { it.start }.toSet()
-    val selected = notes.filter { it.start in starts }
-    val others = notes.filter { it.start !in starts }
-    val (lo, hi) = resizeDeltaBounds(selected, others, length, edge)
+    val selected = notes.filter { if (poly) noteKey(it.pitch, it.start) in keys else it.start in starts }
+    val others = notes - selected.toSet()
+    val (lo, hi) = resizeDeltaBounds(selected, others, length, edge, poly)
     val d = if (lo <= hi) delta.coerceIn(lo, hi) else 0
     return notes.map { n ->
-        if (n.start !in starts) n
+        if (n !in selected) n
         else if (edge > 0) n.copy(len = n.len + d)
         else n.copy(start = n.start + d, len = n.len - d)
     }
@@ -125,8 +181,9 @@ fun rawTransposeProgress(before: List<Step>, actual: List<Step>, delta: Int): In
 /** Shift selected note identities in their existing slots, without rebuilding
  * NOTE/TIE/CONT steps or reordering the per-slot dynamics. Null means clipping
  * or a pitch collision inside a chord. */
-fun transposeSelectedSteps(steps: List<Step>, length: Int, keys: Set<Int>, delta: Int): List<Step>? {
-    val notes = decodeNotes(steps, length)
+fun transposeSelectedSteps(steps: List<Step>, length: Int, keys: Set<Int>, delta: Int,
+                           poly: Boolean = false): List<Step>? {
+    val notes = decodeNotes(steps, length, poly)
     val selected = notes.filter { noteKey(it.pitch, it.start) in keys }
     if (selected.isEmpty()) return steps
     if (selected.any { it.pitch + delta !in 0..127 }) return null
@@ -144,13 +201,44 @@ fun transposeSelectedSteps(steps: List<Step>, length: Int, keys: Set<Int>, delta
             if (pitches.contentEquals(s.notes)) s else s.copy(notes = pitches)
         }
     }
-    return after.takeIf { decodeNotes(it, length).toSet() == desired.toSet() }
+    return after.takeIf { decodeNotes(it, length, poly).toSet() == desired.toSet() }
 }
 
-/** ROLL.chords: a NOTE plus the TIE steps after it. A SLOOP 2.7 CONT slot of a pitch that was
- * sounding is drawn as released: the firmware keeps it sounding after a late key release, but the
- * roll shows the bar ending before the next NOTE. Untouched, such steps are never rewritten. */
-fun decodeNotes(steps: List<Step>, length: Int): List<PNote> = buildList {
+/** ROLL.chords: a NOTE plus the steps its pitches keep sounding through.
+ * On POLY the firmware's CONT slots draw as true overlaps: a CONT'd pitch extends its bar under
+ * the later NOTE and bars end where the step sequence releases them — exactly what seq_step plays.
+ * On a single-voice track a CONT slot of a sounding pitch is drawn as released (recorded late
+ * releases stretch it, but the roll shows the bar ending before the next NOTE).
+ * Untouched, CONT steps are never rewritten. */
+fun decodeNotes(steps: List<Step>, length: Int, poly: Boolean = false): List<PNote> {
+    if (!poly) return decodeNotesFlat(steps, length)
+    val out = mutableListOf<PNote>()
+    val open = HashMap<Int, Int>()
+    for (i in 0 until minOf(length, steps.size)) {
+        val st = steps[i]
+        when {
+            st.time == StepTime.TIE -> open.values.forEach { j ->
+                out[j] = out[j].copy(len = i - out[j].start + 1)
+            }
+            st.time != StepTime.NOTE || st.n <= 0 -> open.clear()
+            else -> {
+                val slots = st.notes.take(st.n.coerceIn(0, 4))
+                val cont = slots.withIndex()
+                    .filter { st.flags and (CONT0 shl it.index) != 0 }.map { it.value }.toSet()
+                open.keys.retainAll(cont)
+                slots.forEachIndexed { k, p ->
+                    if (slots.indexOf(p) != k) return@forEachIndexed
+                    val j = open[p]
+                    if (p in cont && j != null) out[j] = out[j].copy(len = i - out[j].start + 1)
+                    else { open[p] = out.size; out.add(PNote(i, 1, p)) }
+                }
+            }
+        }
+    }
+    return out
+}
+
+private fun decodeNotesFlat(steps: List<Step>, length: Int): List<PNote> = buildList {
     var sounding = emptySet<Int>()
     for (i in 0 until minOf(length, steps.size)) {
         val st = steps[i]
@@ -169,8 +257,9 @@ fun decodeNotes(steps: List<Step>, length: Int): List<PNote> = buildList {
     }
 }
 
-/** For each NOTE step holding hidden CONT slots (see [decodeNotes]): the drawn notes those slots
- * carry on. Chains of CONT-only steps lead back to the same drawn note. */
+/** For each NOTE step holding hidden CONT slots: the drawn notes those slots carry on. Chains of
+ * CONT-only steps lead back to the same drawn note. With released decoding these pitches are
+ * invisible; with overlap decoding the root bar spans the step itself. */
 private fun hiddenRoots(steps: List<Step>, length: Int, drawn: List<PNote>): Map<Int, Set<PNote>> {
     val out = HashMap<Int, MutableSet<PNote>>()
     var sounding = emptyMap<Int, PNote>()
@@ -191,20 +280,23 @@ private fun hiddenRoots(steps: List<Step>, length: Int, drawn: List<PNote>): Map
 
 /**
  * Steps that must change so that the pattern plays [notes]; null if a step would need more than four notes.
- * Each chord is one NOTE and its TIE tail. Never manufacture NOTE+SLIDE steps to simulate overlaps.
- * Untouched raw steps, including recorded CONT and dynamics, are preserved.
+ * Each written chord is one NOTE and its TIE tail; a drawn bar running under a later attack is released
+ * there because a step write cannot carry CONT. Untouched raw steps, including recorded CONT and dynamics,
+ * are preserved.
  */
-fun encodeNotes(old: List<Step>, length: Int, notes: List<PNote>): List<Step>? {
-    val normalized = normalizeNotes(notes, length)
-    val original = decodeNotes(old, length)
+fun encodeNotes(old: List<Step>, length: Int, notes: List<PNote>, poly: Boolean = false): List<Step>? {
+    val normalized = normalizeNotes(notes, length, poly, old)
+    val original = decodeNotes(old, length, poly)
     val oldSets = List(length) { i -> original.filter { i in it.start..it.end }.map { it.pitch }.toSet() }
     val oldStarts = List(length) { i -> original.filter { it.start == i }.map { it.pitch }.toSet() }
     val newSets = List(length) { i -> normalized.filter { i in it.start..it.end }.map { it.pitch }.toSet() }
     val newStarts = List(length) { i -> normalized.filter { it.start == i }.map { it.pitch }.toSet() }
-    // Editing (moving, resizing, deleting) a note drops the hidden continuations it had, so the
-    // device then plays exactly what is drawn: that note's NOTE and its TIE length.
+    // With flat decoding an edited note's hidden continuations are dropped so the device then plays
+    // exactly what is drawn. With overlap decoding the CONT steps sit inside the drawn bar itself and
+    // the per-step sets already rewrite them exactly when the bar changes — nothing extra needed.
     val kept = normalized.toSet()
-    val forced = hiddenRoots(old, length, original).filterValues { roots -> roots.any { it !in kept } }.keys
+    val forced = if (poly) emptySet()
+        else hiddenRoots(old, length, original).filterValues { roots -> roots.any { it !in kept } }.keys
     val wants = ArrayList<Step>()
     for (i in 0 until length) {
         val cur = old.getOrNull(i) ?: return null
