@@ -29,20 +29,20 @@ class NoteModelTest {
         rest(4),
     )
 
-    @Test fun storedNoteBoundariesStayVisibleWithSlideAndContinuationFlags() {
+    @Test fun contSlotContinuesItsPitchWhileOtherSlotsRetrigger() {
         val steps = listOf(
             note(0, listOf(60, 64), 2),
             note(1, listOf(60, 64), CONT0),
             rest(2),
         )
-        assertEquals(setOf(PNote(0, 1, 60), PNote(0, 1, 64), PNote(1, 1, 60), PNote(1, 1, 64)),
+        assertEquals(setOf(PNote(0, 2, 60), PNote(0, 1, 64), PNote(1, 1, 64)),
             decodeNotes(steps, steps.size).toSet())
     }
 
     @Test fun unchangedRecordedOverlapDoesNotGenerateWrites() {
         val steps = recordedOverlap()
         val notes = decodeNotes(steps, steps.size)
-        assertEquals(setOf(PNote(0, 1, 60), PNote(1, 1, 60), PNote(1, 1, 64), PNote(2, 1, 60)), notes.toSet())
+        assertEquals(setOf(PNote(0, 3, 60), PNote(1, 1, 64)), notes.toSet())
         assertTrue(encodeNotes(steps, steps.size, notes)!!.isEmpty())
     }
 
@@ -196,7 +196,7 @@ class NoteModelTest {
         assertEquals(listOf(rest(3)), encodeNotes(steps, steps.size, resized))
         val after = apply(steps, resized)
         assertEquals(steps[1], after[1])
-        assertEquals(listOf(PNote(0, 1, 60), PNote(1, 2, 60), PNote(1, 2, 64)), decodeNotes(after, after.size))
+        assertEquals(listOf(PNote(0, 3, 60), PNote(1, 2, 64)), decodeNotes(after, after.size))
     }
 
     @Test fun groupResizeStopsAtSelectedNeighboursToo() {
@@ -257,5 +257,36 @@ class NoteModelTest {
         val shorter = resizePianoNotes(notes, setOf(noteKey(60, 0)), 1, -1, steps.size)
         val after = apply(steps, shorter)
         assertEquals(steps, apply(after, notes)) // the reverse edit restores the original NOTE + TIE steps
+    }
+
+    // The screenshot case: F#4 held, A#3 pressed over its tail, F#4 released late.
+    private fun lateRelease() = listOf(note(0, listOf(66)), tie(1), tie(2),
+        note(3, listOf(66, 58), CONT0), tie(4), tie(5), rest(6))
+
+    @Test fun recordedContinuationIsOneNoteNotADuplicate() {
+        val steps = lateRelease()
+        assertEquals(listOf(PNote(0, 6, 66), PNote(3, 3, 58)), decodeNotes(steps, steps.size))
+        assertTrue(encodeNotes(steps, steps.size, decodeNotes(steps, steps.size))!!.isEmpty())
+    }
+
+    @Test fun shorteningAContinuedNoteBeforeTheNextNoteRemovesItFromThatStep() {
+        val steps = lateRelease()
+        val cut = resizePianoNotes(decodeNotes(steps, steps.size), setOf(noteKey(66, 0)), 1, -3, steps.size)
+        assertEquals(listOf(note(3, listOf(58))), encodeNotes(steps, steps.size, cut))
+        val after = apply(steps, cut)
+        assertEquals(listOf(PNote(0, 3, 66), PNote(3, 3, 58)), decodeNotes(after, after.size))
+    }
+
+    @Test fun aContinuedNoteCannotEndInsideTheSharedTail() {
+        val steps = lateRelease()
+        val notes = decodeNotes(steps, steps.size)
+        assertTrue(encodeNotes(steps, steps.size,
+            resizePianoNotes(notes, setOf(noteKey(66, 0)), 1, -1, steps.size))!!.isEmpty())
+    }
+
+    @Test fun editsElsewhereKeepTheContinuation() {
+        val steps = lateRelease()
+        val notes = placePianoNotes(decodeNotes(steps, steps.size), listOf(PNote(6, 1, 70)), steps.size)
+        assertEquals(listOf(6), encodeNotes(steps, steps.size, notes)!!.map { it.index })
     }
 }

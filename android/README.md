@@ -49,7 +49,8 @@ reported and discarded on disconnect. App-process death also loses queued edits 
   step supports up to four notes. As in the original web editor, a new NOTE inside a TIE tail
   ends that tail; extending a chord stops before the next NOTE of any pitch. Adding a pitch at
   an existing NOTE keeps that chord's duration. The roll shows each stored NOTE and its following
-  TIEs, without merging NOTE boundaries through SLIDE or CONT. The TIE toolbar switch adds
+  TIEs; a SLOOP 2.7 CONT slot (a key held over the next recorded note) continues the same bar.
+  Shorten such a bar to before the next NOTE to drop the held pitch from that step. The TIE toolbar switch adds
   continuation markers; dragging previews the same chord boundaries that will be sent.
   Clear asks for confirmation; per-step accent/slide/tie options,
   length +/- controls and keyboard are in the piano-roll's step options. The sequencer shows the
@@ -106,7 +107,7 @@ cd android
 
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`. Or copy it to the phone and tap it
 (allow "install from unknown sources"). Current `applicationId` is `com.sloop.go`, `versionCode`
-is 45 and `versionName` is 1.7.19. For each major update increment `versionCode` and update
+is 46 and `versionName` is 1.7.20. For each major update increment `versionCode` and update
 `versionName` in `android/app/build.gradle`, and update the APK link in the root `README.md`
 to the new release (`releases/download/<tag>/sloop_go_<version>.apk`); keep the same package
 and signing key to install updates over existing installations with `adb install -r`.

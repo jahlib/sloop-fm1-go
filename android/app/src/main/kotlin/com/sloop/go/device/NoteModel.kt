@@ -18,7 +18,7 @@ data class PNote(val start: Int, val len: Int, val pitch: Int) {
 /** A note's identity inside one pattern (pitch + first step), stable while the note is only moved or cut at its end. */
 fun noteKey(pitch: Int, start: Int): Int = pitch * 1024 + start
 
-/** Bounds for resizing whole chords. A right edge stops at the next NOTE of any pitch;
+/** Bounds for resizing whole chords. A right edge stops at the next NOTE after its end;
  * a left edge cannot cross the previous chord's end. Selected neighbours count too. */
 fun resizeDeltaBounds(sel: List<PNote>, others: List<PNote>, length: Int, edge: Int): Pair<Int, Int> {
     if (sel.isEmpty()) return 0 to 0
@@ -27,37 +27,51 @@ fun resizeDeltaBounds(sel: List<PNote>, others: List<PNote>, length: Int, edge: 
     var hi = Int.MAX_VALUE
     for (n in sel.distinctBy { it.start }) {
         if (edge > 0) {
-            val maxEnd = all.filter { it.start > n.start }
+            val maxEnd = all.filter { it.start > n.end }
                 .minOfOrNull { it.start - 1 } ?: (length - 1)
             lo = maxOf(lo, 1 - n.len); hi = minOf(hi, maxEnd - n.end)
         } else {
             val minStart = all.filter { it.start < n.start }
-                .maxOfOrNull { it.end + 1 } ?: 0
+                .maxOfOrNull { minOf(it.end, n.start - 1) + 1 } ?: 0
             lo = maxOf(lo, minStart - n.start); hi = minOf(hi, n.len - 1)
         }
     }
     return lo to hi
 }
 
-/** Canonical NOTE + TIE chords. New starts cut preceding tails; a cut tail never resumes.
- * Used for imported clips too. Voice mode changes sound, not the stored sequence. */
-fun normalizeNotes(notes: List<PNote>, length: Int): List<PNote> {
-    val groups = notes.filter { it.start in 0 until length && it.pitch in 0..127 && it.len > 0 }
-        .groupBy { it.start }.toSortedMap().entries.toList()
-    return groups.flatMapIndexed { i, (start, chord) ->
-        val next = groups.getOrNull(i + 1)?.key ?: length
-        val duration = minOf(chord.maxOf { it.len }, next - start)
-        chord.distinctBy { it.pitch }.map { it.copy(len = duration) }
+/** Canonical NOTE + TIE chords. A chord's pitches share its TIE tail up to the next NOTE.
+ * A pitch may cross that NOTE only where [continues] (an untouched SLOOP 2.7 CONT slot)
+ * says the device carries it on; it then lasts as long as the chord it runs through. */
+fun normalizeNotes(notes: List<PNote>, length: Int,
+                   continues: (pitch: Int, step: Int) -> Boolean = { _, _ -> false }): List<PNote> {
+    val valid = notes.filter { it.start in 0 until length && it.pitch in 0..127 && it.len > 0 }
+    val chords = valid.groupBy { it.start }.toSortedMap()
+    val starts = chords.keys.toList()
+    fun nextStart(after: Int) = starts.firstOrNull { it > after } ?: length
+    val dur = chords.mapValues { (s, g) -> minOf(g.maxOf { it.len }, nextStart(s) - s) }
+    return chords.flatMap { (s, g) ->
+        g.distinctBy { it.pitch }.map { n ->
+            var end = s + dur.getValue(s) - 1
+            while (n.end > end) {
+                val j = end + 1
+                end = when {
+                    j >= length -> break
+                    !continues(n.pitch, j) -> break
+                    j in dur -> j + dur.getValue(j) - 1
+                    else -> minOf(n.end, nextStart(j) - 1)   // a NOTE step of CONT slots only
+                }
+            }
+            n.copy(len = end - s + 1)
+        }
     }
 }
 
 /** ROLL.place: an existing NOTE keeps its duration when another pitch joins it.
- * Placing inside a TIE starts a new chord and cuts the old tail, without a copied attack. */
-fun placePianoNotes(base: List<PNote>, added: List<PNote>, length: Int): List<PNote> {
-    val durations = base.associate { it.start to it.len }
-    return normalizeNotes(base + added.map { n ->
-        durations[n.start]?.let { n.copy(len = it) } ?: n
-    }, length)
+ * Placing inside a TIE starts a new chord; [encodeNotes] cuts the old tail there. */
+fun placePianoNotes(base: List<PNote>, added: List<PNote>, @Suppress("UNUSED_PARAMETER") length: Int): List<PNote> {
+    val durations = base.groupBy { it.start }.mapValues { (_, g) -> g.minOf { it.len } }
+    val placed = added.map { n -> durations[n.start]?.let { n.copy(len = it) } ?: n }
+    return base.filter { b -> placed.none { it.start == b.start && it.pitch == b.pitch } } + placed
 }
 
 /** Shared by the controller and drag preview, including copy and partial-chord moves. */
@@ -136,16 +150,36 @@ fun transposeSelectedSteps(steps: List<Step>, length: Int, keys: Set<Int>, delta
     return after.takeIf { decodeNotes(it, length).toSet() == desired.toSet() }
 }
 
-/** ROLL.chords: every NOTE has its own start; only following TIEs add to its length.
- * CONT is still shown as a continuation marker, but never stretches the preceding rectangle. */
-fun decodeNotes(steps: List<Step>, length: Int): List<PNote> = buildList {
+/** ROLL.chords: a NOTE plus the TIE steps after it. A SLOOP 2.7 CONT slot is not a new
+ * attack: that pitch goes on from the step before, so it extends the same rectangle. */
+fun decodeNotes(steps: List<Step>, length: Int): List<PNote> {
+    val out = ArrayList<PNote>()
+    val last = HashMap<Int, Int>()
     for (i in 0 until minOf(length, steps.size)) {
         val st = steps[i]
         if (st.time != StepTime.NOTE || st.n <= 0) continue
         var duration = 1
         while (i + duration < length && steps.getOrNull(i + duration)?.time == StepTime.TIE) duration++
-        st.notes.take(st.n.coerceIn(0, 4)).forEach { add(PNote(i, duration, it)) }
+        st.notes.take(st.n.coerceIn(0, 4)).forEachIndexed { k, p ->
+            val at = last[p]
+            val prev = at?.let { out[it] }
+            when {
+                prev != null && prev.start == i -> {}
+                prev != null && prev.end == i - 1 && st.flags and (CONT0 shl k) != 0 ->
+                    out[at!!] = prev.copy(len = i + duration - prev.start)
+                else -> { last[p] = out.size; out.add(PNote(i, duration, p)) }
+            }
+        }
     }
+    return out
+}
+
+/** The pitches the device carries on into NOTE step [step] (its CONT slots). */
+private fun continues(steps: List<Step>, pitch: Int, step: Int): Boolean {
+    val st = steps.getOrNull(step) ?: return false
+    if (st.time != StepTime.NOTE) return false
+    return st.notes.take(st.n.coerceIn(0, 4)).withIndex()
+        .any { (k, p) -> p == pitch && st.flags and (CONT0 shl k) != 0 }
 }
 
 /**
@@ -154,7 +188,7 @@ fun decodeNotes(steps: List<Step>, length: Int): List<PNote> = buildList {
  * Untouched raw steps, including recorded CONT and dynamics, are preserved.
  */
 fun encodeNotes(old: List<Step>, length: Int, notes: List<PNote>): List<Step>? {
-    val normalized = normalizeNotes(notes, length)
+    val normalized = normalizeNotes(notes, length) { p, j -> continues(old, p, j) }
     val original = decodeNotes(old, length)
     val oldSets = List(length) { i -> original.filter { i in it.start..it.end }.map { it.pitch }.toSet() }
     val oldStarts = List(length) { i -> original.filter { it.start == i }.map { it.pitch }.toSet() }
@@ -174,7 +208,8 @@ fun encodeNotes(old: List<Step>, length: Int, notes: List<PNote>): List<Step>? {
             // Do not rewrite untouched NOTE/CONT steps, TIE dynamics, or orphan TIEs.
             set == oldSets[i] && newStarts[i] == oldStarts[i] -> cur
             set.isEmpty() -> blank(cur, StepTime.REST)
-            !starts -> blank(cur, StepTime.TIE)
+            // TIE holds everything that sounds; a smaller set needs a new NOTE (re-attack).
+            !starts && i > 0 && set == newSets[i - 1] -> blank(cur, StepTime.TIE)
             else -> noteStep(cur, set)
         }
         wants.add(if (sameShape(cur, want)) cur else want)
