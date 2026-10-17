@@ -117,6 +117,14 @@ fun voiceMode(state: DeviceState): Int {
 
 private const val SLIDE = 2
 
+/** SLOOP 2.7: bits 3..6 of a NOTE step's flags; bit 3 + k = note k goes on from the step before (not played again). */
+const val CONT0 = 8
+const val CONT_ALL = 15 * CONT0
+
+/** The pitches of [st] that go on from the step before (SLOOP 2.7, recorded over a held note). */
+private fun contPitches(st: Step): Set<Int> =
+    st.notes.take(st.n.coerceIn(0, 4)).filterIndexed { k, _ -> st.flags and (CONT0 shl k) != 0 }.toSet()
+
 fun decodeNotes(steps: List<Step>, length: Int): List<PNote> {
     val out = ArrayList<PNote>()
     val open = HashMap<Int, Int>()
@@ -132,7 +140,7 @@ fun decodeNotes(steps: List<Step>, length: Int): List<PNote> {
             else -> {
                 val set = st.notes.take(st.n.coerceIn(0, 4)).toSet()
                 val legato = i > 0 && ((steps.getOrNull(i - 1)?.flags ?: 0) and SLIDE) != 0
-                close(i - 1, if (legato) set else emptySet())
+                close(i - 1, (if (legato) set else emptySet()) + contPitches(st))
                 set.forEach { if (it !in open) open[it] = i }
             }
         }
@@ -165,7 +173,9 @@ fun encodeNotes(old: List<Step>, length: Int, notes: List<PNote>): List<Step>? {
     for (i in 1 until length) {
         if (wants[i].time != StepTime.NOTE) continue
         val prev = wants[i - 1]
-        if (notes.any { it.start <= i - 1 && it.end >= i }) wants[i - 1] = prev.copy(flags = prev.flags or SLIDE)
+        val going = notes.filter { it.start <= i - 1 && it.end >= i }.map { it.pitch }
+        if (going.isNotEmpty() && contPitches(wants[i]).containsAll(going)) continue   // the device carries them on itself (2.7)
+        if (going.isNotEmpty()) wants[i - 1] = prev.copy(flags = prev.flags or SLIDE)
         else if (sets[i - 1].any { it in sets[i] }) wants[i - 1] = prev.copy(flags = prev.flags and SLIDE.inv())
     }
     return (0 until length).filter { wants[it] != old[it] }.map { wants[it] }
@@ -188,7 +198,7 @@ private fun noteStep(cur: Step, set: Set<Int>): Step {
         }
     }
     return cur.copy(n = list.size, notes = IntArray(4) { list.getOrElse(it) { 0 } }, time = StepTime.NOTE,
-        flags = if (isNote) cur.flags else 0, vel = if (isNote && cur.vel > 0) cur.vel else 100,
+        flags = if (isNote) cur.flags and CONT_ALL.inv() else 0, vel = if (isNote && cur.vel > 0) cur.vel else 100,
         lvl = levels, rat = ratchets)
 }
 

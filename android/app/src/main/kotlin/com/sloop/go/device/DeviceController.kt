@@ -931,7 +931,9 @@ class DeviceController(context: Context) {
         return if (len == n.len) null else n.copy(len = len)
     }
 
-    private fun applySynthBatch(batch: List<UserEdit.Synth>, record: Boolean = true) {
+    private fun applySynthBatch(batch0: List<UserEdit.Synth>, record: Boolean = true) {
+        // the device keeps only ACCENT and SLIDE of a written step (the 2.7 "going on" bits are its own): so does the local copy
+        val batch = batch0.map { it.copy(step = it.step.copy(flags = it.step.flags and CONT_ALL.inv())) }
         val s = _state.value
         if (s.link != Link.READY || batch.isEmpty() ||
             batch.any { it.track != s.selectedTrack || it.index !in s.steps.indices }) return
