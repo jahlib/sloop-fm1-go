@@ -11,16 +11,16 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
+import androidx.compose.material3.Surface
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -70,14 +70,15 @@ fun LfoChips(vm: SloopViewModel, assign: Int, onAssign: (Int) -> Unit, frame: St
                     val h = size.height - 2 * pad
                     val path = Path()
                     val n = 24
+                    val cyc = vm.lfo.cycleAt(i, System.nanoTime() / 1e9)
+                    val origin = Math.floor(cyc / 2.0) * 2.0
                     for (k in 0..n) {
                         val x = size.width * k / n
-                        val y = pad + h * (1f - (lfoWave(cfg.shape, 2.0 * k / n + LFO_PHASES[cfg.phase] / 360.0, cfg.curve) + 1f) / 2f)
+                        val y = pad + h * (1f - (lfoWave(cfg.shape, origin + 2.0 * minOf(k.toDouble(), n - 0.001) / n, cfg.curve) + 1f) / 2f)
                         if (k == 0) path.moveTo(x, y) else path.lineTo(x, y)
                     }
                     drawPath(path, line.copy(alpha = 0.55f), style = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round))
-                    val cyc = vm.lfo.cycleAt(i, System.nanoTime() / 1e9)
-                    val u = cyc - Math.floor(cyc / 2.0) * 2.0
+                    val u = cyc - origin
                     drawCircle(line, 3.dp.toPx(), Offset((size.width * u / 2.0).toFloat(),
                         pad + h * (1f - (lfoWave(cfg.shape, cyc, cfg.curve) + 1f) / 2f)))
                 }
@@ -94,7 +95,8 @@ fun LfoPanel(vm: SloopViewModel, i: Int, frame: State<Long>) {
     val st by vm.lfo.state.collectAsState()
     val color = LFO_COLORS[i]
     val cfg = st.cfg[i]
-    Card(Modifier.fillMaxWidth()) {
+    Surface(Modifier.widthIn(max = 380.dp).fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(bottomEnd = 16.dp), tonalElevation = 3.dp, shadowElevation = 6.dp) {
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val n = st.amounts[i].size
@@ -102,57 +104,73 @@ fun LfoPanel(vm: SloopViewModel, i: Int, frame: State<Long>) {
                 Text("drag a knob to set its amount" + if (n > 0) " · $n assigned" else "",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                MiniMenu(LFO_SHAPES[cfg.shape], LFO_SHAPES, color, Modifier.weight(1f)) { vm.lfo.setCfg(i, cfg.copy(shape = it)) }
-                MiniMenu(LFO_RATES[cfg.rate].first, LFO_RATES.map { it.first }, color, Modifier.weight(1f)) {
-                    vm.lfo.setCfg(i, cfg.copy(rate = it))
+            Row(Modifier.fillMaxWidth().height(100.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween) {
+                    MiniMenu("SHAPE", LFO_SHAPES[cfg.shape], LFO_SHAPES, color, Modifier.fillMaxWidth()) {
+                        vm.lfo.setCfg(i, cfg.copy(shape = it))
+                    }
+                    MiniMenu("RATE", LFO_RATES[cfg.rate].first, LFO_RATES.map { it.first }, color, Modifier.fillMaxWidth()) {
+                        vm.lfo.setCfg(i, cfg.copy(rate = it))
+                    }
                 }
-                MiniMenu("PH ${LFO_PHASES[cfg.phase]}°", LFO_PHASES.map { "$it°" }, color, Modifier.weight(1f)) {
-                    vm.lfo.setCfg(i, cfg.copy(phase = it))
+                Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween) {
+                    MiniMenu("PHASE", "${LFO_PHASES[cfg.phase]}°", LFO_PHASES.map { "$it°" }, color, Modifier.fillMaxWidth()) {
+                        vm.lfo.setCfg(i, cfg.copy(phase = it))
+                    }
+                    MiniMenu("CURVE", LFO_CURVES[cfg.curve], LFO_CURVES, color, Modifier.fillMaxWidth()) {
+                        vm.lfo.setCfg(i, cfg.copy(curve = it))
+                    }
                 }
-                MiniMenu(LFO_CURVES[cfg.curve], LFO_CURVES, color, Modifier.weight(1f)) {
-                    vm.lfo.setCfg(i, cfg.copy(curve = it))
-                }
+                Scope(vm, i, cfg, color, frame, Modifier.weight(1.4f).fillMaxHeight())
             }
-            Scope(vm, i, cfg, color, frame)
         }
     }
 }
 
 @Composable
-private fun MiniMenu(label: String, options: List<String>, color: Color, modifier: Modifier, onPick: (Int) -> Unit) {
+private fun MiniMenu(caption: String, label: String, options: List<String>, color: Color, modifier: Modifier,
+                     onPick: (Int) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Box(modifier) {
-        Text("$label ▾", Modifier.fillMaxWidth().border(1.dp, color.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
-            .clickable { open = true }.padding(horizontal = 6.dp, vertical = 6.dp),
-            style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Clip,
-            fontFamily = SloopFontFamily)
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            options.forEachIndexed { k, o -> DropdownMenuItem(text = { Text(o) }, onClick = { open = false; onPick(k) }) }
+    Column(modifier) {
+        Text(caption, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Box {
+            Text("$label ▾", Modifier.fillMaxWidth().border(1.dp, color.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                .clickable { open = true }.padding(horizontal = 8.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Clip,
+                fontFamily = SloopFontFamily)
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                options.forEachIndexed { k, o -> DropdownMenuItem(text = { Text(o) }, onClick = { open = false; onPick(k) }) }
+            }
         }
     }
 }
 
-/** Two cycles of the wave; the dot rides it at the LFO's position now (read from the engine every frame). */
+/**
+ * The two cycles the LFO is in now (so a S&H shows the values it is really holding); the dot rides the wave at the
+ * LFO's position, read from the engine every frame.
+ */
 @Composable
-private fun Scope(vm: SloopViewModel, i: Int, cfg: LfoCfg, color: Color, frame: State<Long>) {
+private fun Scope(vm: SloopViewModel, i: Int, cfg: LfoCfg, color: Color, frame: State<Long>, modifier: Modifier) {
     val line = MaterialTheme.colorScheme.outline
     val surface = MaterialTheme.colorScheme.surfaceVariant
-    Canvas(Modifier.fillMaxWidth().height(48.dp).border(1.dp, line.copy(alpha = 0.5f), RoundedCornerShape(8.dp))) {
+    Canvas(modifier.border(1.dp, line.copy(alpha = 0.5f), RoundedCornerShape(8.dp))) {
         frame.value
         drawRect(surface.copy(alpha = 0.5f))
-        val pad = 6.dp.toPx()
+        val pad = 8.dp.toPx()
         val h = size.height - 2 * pad
         val w = size.width
         fun y(v: Float) = pad + h * (1f - (v + 1f) / 2f)
         drawLine(line.copy(alpha = 0.4f), Offset(0f, y(0f)), Offset(w, y(0f)), strokeWidth = 1.dp.toPx())
-        val phase = LFO_PHASES[cfg.phase] / 360.0
+        val cyc = vm.lfo.cycleAt(i, System.nanoTime() / 1e9)
+        val origin = Math.floor(cyc / 2.0) * 2.0
+        drawLine(line.copy(alpha = 0.25f), Offset(w / 2, 0f), Offset(w / 2, size.height), strokeWidth = 1.dp.toPx())
         val path = Path()
         val n = (w / 2.dp.toPx()).toInt().coerceAtLeast(2)
         var prev = 0f
         for (k in 0..n) {
             val x = w * k / n
-            val yy = y(lfoWave(cfg.shape, 2.0 * k / n + phase, cfg.curve))
+            // a hair inside the right edge so the last point stays in this pair of cycles
+            val yy = y(lfoWave(cfg.shape, origin + 2.0 * minOf(k.toDouble(), n - 0.001) / n, cfg.curve))
             if (k == 0) path.moveTo(x, yy) else {
                 if (cfg.shape >= 4) path.lineTo(x, prev)   // a step wave holds its old value up to the jump
                 path.lineTo(x, yy)
@@ -160,9 +178,7 @@ private fun Scope(vm: SloopViewModel, i: Int, cfg: LfoCfg, color: Color, frame: 
             prev = yy
         }
         drawPath(path, color, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
-        val cyc = vm.lfo.cycleAt(i, System.nanoTime() / 1e9)
-        val u = cyc - Math.floor(cyc / 2.0) * 2.0
-        val cx = (w * u / 2.0).toFloat()
+        val cx = (w * (cyc - origin) / 2.0).toFloat()
         drawLine(color.copy(alpha = 0.35f), Offset(cx, 0f), Offset(cx, size.height), strokeWidth = 1.dp.toPx())
         drawCircle(color, 4.dp.toPx(), Offset(cx, y(lfoWave(cfg.shape, cyc, cfg.curve))))
     }

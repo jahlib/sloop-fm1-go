@@ -190,7 +190,7 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
                 .fillMaxHeight(),
         ) {
             when (tab) {
-                Tab.PARAMS -> ParamsScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
+                Tab.PARAMS -> ParamsScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.SEQ -> SequencerScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.LIVE -> LiveScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.FM6 -> Fm6Screen(vm, state, onDevice = { tab = Tab.SETTINGS })
@@ -203,7 +203,7 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
             }
             // the sequencer embeds the cluster in its control row only once the device info is loaded
             val ready = state.link == Link.READY && state.info != null
-            val seqHasNav = ready && (tab == Tab.SEQ || tab == Tab.SAMPLES || tab == Tab.LIVE ||
+            val seqHasNav = ready && (tab == Tab.SEQ || tab == Tab.SAMPLES || tab == Tab.LIVE || tab == Tab.PARAMS ||
                 (tab == Tab.DRUMSYNTH && (state.info?.proto ?: 0) >= 10))
             if (!seqHasNav) {
                 Surface(Modifier.align(Alignment.TopStart).padding(6.dp),

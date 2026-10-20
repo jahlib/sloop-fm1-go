@@ -146,7 +146,7 @@ private fun layout(pe0: Int): List<Group> = listOf(
     ) else emptyList())
 
 @Composable
-fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
+fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, nav: @Composable () -> Unit) {
     if (state.link != Link.READY || state.info == null || state.dump == null) {
         NotReady("Sound", state, onDevice)
         return
@@ -171,7 +171,7 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
     LaunchedEffect(Unit) { while (true) androidx.compose.runtime.withFrameNanos { frame.value = it } }
 
     fun drop() {
-        val lead = if (assign >= 0) 3 else 2      // header, [LFO settings], sound card come before the groups
+        val lead = 1      // the sound card comes before the groups
         if (dragIndex < 0) { dragOffset = Offset.Zero; return }
         val info2 = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == dragIndex + lead }
         if (info2 != null) {
@@ -194,6 +194,11 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
         dragIndex = -1; dragOffset = Offset.Zero
     }
 
+    val shownLfo = remember { mutableIntStateOf(0) }
+    if (assign >= 0) shownLfo.intValue = assign          // the panel keeps its content while it slides away
+    Column(Modifier.fillMaxSize()) {
+    SoundHeader(vm, state, nav, assign, { assign = it }, frame)
+    Box(Modifier.weight(1f).fillMaxWidth()) {
     LazyVerticalStaggeredGrid(
         columns = StaggeredGridCells.Fixed(2),
         state = gridState,
@@ -202,16 +207,6 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalItemSpacing = 8.dp,
     ) {
-        item(key = "header", span = StaggeredGridItemSpan.FullLine) {
-            ScreenHeader("Sound · Track ${state.selectedTrack + 1}", state, NAV_INSET) {
-                LfoChips(vm, assign, { assign = it }, frame)
-            }
-        }
-
-        if (assign >= 0) item(key = "lfos", span = StaggeredGridItemSpan.FullLine) {
-            LfoPanel(vm, assign, frame)
-        }
-
         // Track + preset/kit selectors: two dropdown buttons on one row.
         item(key = "sound", span = StaggeredGridItemSpan.FullLine) {
             Card(Modifier.fillMaxWidth()) {
@@ -397,6 +392,32 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
         if (state.isDrum && info.proto >= 12) item(key = "drum-sound", span = StaggeredGridItemSpan.FullLine) {
             DrumSoundCard(vm)
         }
+    }
+    androidx.compose.animation.AnimatedVisibility(assign >= 0, Modifier.align(Alignment.TopStart),
+        enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
+        exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut()) {
+        LfoPanel(vm, shownLfo.intValue, frame)
+    }
+    }
+    }
+}
+
+/** The pinned top row of the Sound page: play + menu, the title, the four LFO buttons (they scroll under the pinned parts). */
+@Composable
+private fun SoundHeader(vm: SloopViewModel, state: DeviceState, nav: @Composable () -> Unit, assign: Int,
+                        onAssign: (Int) -> Unit, frame: androidx.compose.runtime.State<Long>) {
+    val cs = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().background(cs.surface), verticalAlignment = Alignment.CenterVertically) {
+        nav()
+        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Sound · T${state.selectedTrack + 1}", style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold, maxLines = 1)
+            LfoChips(vm, assign, onAssign, frame)
+        }
+        Text(state.queueError ?: if (state.queuedEdits > 0) "queue ${state.queuedEdits}" else "",
+            Modifier.padding(start = 8.dp, end = 12.dp), style = MaterialTheme.typography.labelSmall, maxLines = 1,
+            color = if (state.queueError != null) cs.error else cs.onSurfaceVariant)
     }
 }
 

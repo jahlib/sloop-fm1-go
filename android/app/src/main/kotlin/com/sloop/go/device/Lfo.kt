@@ -98,8 +98,19 @@ class LfoEngine(
     @Volatile private var beat = 0.0
     @Volatile private var beatTime = System.nanoTime() / 1e9
     @Volatile private var bpm = 120.0
-    private var synced = false
+    /** Beats per second the phase really advances: the device's tempo times a gentle correction (see [tick]). */
+    @Volatile private var rate = 2.0
+    private var mult = 1.0
+    private var haveRef = false
+    private var refKey = 0L
+    private var lastP = -1.0
+    private var cycles = 0
+    private var offset = 0.0
+    private var errF = 0.0
+    /** The LFOs only move (and write) while the FM-1 plays; stopped, they stand still and the queue stays free. */
+    @Volatile private var running = false
     private val sent = java.util.concurrent.ConcurrentHashMap<LfoTarget, Int>()
+    private val recent = HashMap<LfoTarget, ArrayDeque<Pair<Int, Double>>>()
 
     init {
         ctl.onParamPush = ::onDeviceChange
@@ -112,7 +123,7 @@ class LfoEngine(
     }
 
     /** The tempo position (beats) at [now] seconds. */
-    fun beatAt(now: Double): Double = beat + (now - beatTime) * bpm / 60.0
+    fun beatAt(now: Double): Double = if (running) beat + (now - beatTime) * rate else beat
 
     fun cycleAt(i: Int, now: Double): Double = lfoCycle(_state.value.cfg[i], beatAt(now))
 
@@ -165,44 +176,89 @@ class LfoEngine(
     fun setBase(t: LfoTarget, v: Int) {
         _state.update { s -> s.copy(bases = s.bases + (t to v)) }
         save()
+        if (!running) apply(ctl.state.value)      // stopped: the knob keeps the frozen LFO offset on its new base
     }
 
-    /** A change made on the FM-1 itself (CHANGED push) on a driven knob becomes its base. */
-    private fun onDeviceChange(scope: Int, id: Int, value: Int) {
+    private fun writeValue(t: LfoTarget, v: Int) {
+        sent[t] = v
+        noteSent(t, v)
+        ctl.setParam(t.scope, t.id, v, record = false, trackOverride = if (t.scope == 0) t.track else null,
+            glide = false, optimistic = false)
+    }
+
+    /**
+     * A CHANGED push from the FM-1. The echo of our own write (it may arrive late, after newer ones) is swallowed so it
+     * neither moves the base nor repaints the page; a value we never sent is a change made on the FM-1 and becomes the
+     * knob's new base.
+     */
+    private fun onDeviceChange(scope: Int, id: Int, value: Int): Boolean {
         val t = LfoTarget(if (scope == 0) ctl.state.value.selectedTrack else -1, scope, id)
-        if (!_state.value.modulated(t) || sent[t] == value) return
+        if (!_state.value.modulated(t)) return false
+        val now = System.nanoTime() / 1e9
+        val echo = synchronized(recent) { recent[t]?.any { now - it.second < 3.0 && it.first == value } == true }
+        if (echo) return true
         _state.update { s -> s.copy(bases = s.bases + (t to value)) }
+        return false
     }
 
+    private fun noteSent(t: LfoTarget, v: Int) {
+        val now = System.nanoTime() / 1e9
+        synchronized(recent) {
+            val q = recent.getOrPut(t) { ArrayDeque() }
+            q.addLast(v to now)
+            while (q.size > 32 || (q.isNotEmpty() && now - q.first().second > 3.0)) q.removeFirst()
+        }
+    }
+
+    /**
+     * The phase advances at the device's BPM and never jumps. To stay in step with the FM-1 (its BPM is a whole number and
+     * its clock drifts a little) the playhead is followed as a reference: the offset between the LFO and the playhead is
+     * taken when play starts, so the LFO carries on from where it was. Any drift from that offset, low-pass filtered
+     * (the polled playhead is quantised to steps), speeds the LFO up or slows it down by at most 4 %, changing the speed
+     * only a hair per tick. A real jump of the playhead just takes a new offset.
+     */
     private fun tick() {
         val now = System.nanoTime() / 1e9
         val s = ctl.state.value
         val lv = ctl.transport.value
-        var b = beatAt(now)
         lv?.bpm?.takeIf { it > 0 }?.let { bpm = it.toDouble() }
-        var lockedNow = false
-        if (ctl.clock.playing) {
-            val track = s.selectedTrack
-            val pos = ctl.clock.position(track, now)
-            if (pos >= 0f) {
-                val divIdx = s.pdesc.indexOfFirst { it?.label == "DIV" }
-                val per = DIV_PER_BAR.getOrElse(if (divIdx >= 0) s.paramValue(divIdx) else 2) { 16.0 }
-                val perStep = 4.0 / per
-                val len = (lv?.len?.getOrNull(track) ?: 0).takeIf { it > 0 } ?: s.patternLength
-                val total = len * perStep
-                val p = pos * perStep
-                if (!synced) b = p
-                else {
-                    var err = p - (b % total)
-                    err -= total * (err / total).roundToInt()
-                    b += if (abs(err) > 0.25) err else err * 0.08
-                }
-                lockedNow = true
-            }
+        if (!(s.playing || ctl.clock.playing)) {
+            running = false      // stopped: everything stands exactly where it is, the phase included
+            haveRef = false; lastP = -1.0
+            return
         }
-        synced = lockedNow
-        beat = b
+        if (!running) beatTime = now      // play again: carry on from the same phase, no jump across the pause
+        beat = beatAt(now)
         beatTime = now
+        running = true
+
+        var target = 1.0
+        val track = s.selectedTrack
+        val pos = if (ctl.clock.playing) ctl.clock.position(track, now) else -1f
+        if (pos >= 0f) {
+            val divIdx = s.pdesc.indexOfFirst { it?.label == "DIV" }
+            val div = if (divIdx >= 0) s.paramValue(divIdx) else 2
+            val perStep = 4.0 / DIV_PER_BAR.getOrElse(div) { 16.0 }
+            val len = (lv?.len?.getOrNull(track) ?: 0).takeIf { it > 0 } ?: s.patternLength
+            val total = len * perStep
+            val key = track * 100000L + len * 100L + div
+            if (key != refKey) { refKey = key; haveRef = false; lastP = -1.0; cycles = 0 }
+            val p = pos * perStep
+            if (lastP >= 0 && p < lastP - total / 2) cycles++
+            lastP = p
+            val u = p + cycles * total
+            if (!haveRef) { offset = beat - u; errF = 0.0; haveRef = true }
+            else {
+                val e = u + offset - beat
+                if (abs(e) > 1.0) { offset = beat - u; errF = 0.0 }       // the playhead jumped: new reference, no phase jump
+                else {
+                    errF += (e - errF) * 0.05
+                    target = 1.0 + (errF * 0.15).coerceIn(-0.04, 0.04)
+                }
+            }
+        } else haveRef = false
+        mult += (target - mult).coerceIn(-0.0005, 0.0005)     // ease the speed, never switch it
+        rate = bpm / 60.0 * mult
         apply(s)
     }
 
@@ -225,9 +281,7 @@ class LfoEngine(
             val range = desc.max - desc.min
             val v = (base + (m * range * 0.5f).roundToInt()).coerceIn(desc.min, desc.max)
             if (sent[t] == v) continue
-            sent[t] = v
-            ctl.setParam(t.scope, t.id, v, record = false, trackOverride = if (t.scope == 0) t.track else null,
-                glide = false, optimistic = false)
+            writeValue(t, v)
         }
     }
 

@@ -80,7 +80,7 @@ class DeviceController(context: Context) {
     val recordingTrace = RecordingTrace()
 
     /** A parameter the FM-1 itself changed (CHANGED push of the selected track or a global): scope, id, value. */
-    @Volatile var onParamPush: ((Int, Int, Int) -> Unit)? = null
+    @Volatile var onParamPush: ((Int, Int, Int) -> Boolean)? = null
 
     /** Undo / redo, in RAM only: every edit is also noted here and is put back through the very same queue. */
     val history = EditHistory(onChange = { u, r -> _state.update { it.copy(canUndo = u, canRedo = r) } })
@@ -1654,8 +1654,9 @@ class DeviceController(context: Context) {
         when (cmd) {
             Cmd.CHANGED -> {
                 val pv = Parse.param(args)
-                _state.update { s -> s.withParam(pv.scope, pv.id, pv.value) }
-                onParamPush?.invoke(pv.scope, pv.id, pv.value)
+                // true: the echo of an LFO write, nothing to show
+                if (onParamPush?.invoke(pv.scope, pv.id, pv.value) != true)
+                    _state.update { s -> s.withParam(pv.scope, pv.id, pv.value) }
             }
             Cmd.RELOAD -> {
                 if (nativeTransposeTrack != null) return

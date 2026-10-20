@@ -67,7 +67,7 @@ reported and discarded on disconnect. App-process death also loses queued edits 
   explicit choice to send all drafts or discard them. Disconnect also discards unsent drafts.
 - **Sound LFOs**: four LFOs live in the app. Their buttons (each a small scope) sit in the Sound page's header; the
   one in assign mode opens its settings: shape, rate (1/32 to 16 bars, with triplets), phase and curve (soft to
-  sharp). They run on the device's BPM and lock to its playhead when play starts.
+  sharp). They run on the device's BPM, only while it plays, and carry on from the same phase after a pause.
   The LFO button lights every knob: dragging a knob then sets how much (-100..100 %) of that LFO it gets, drawn as a
   bipolar arc; hold a knob and confirm to take the LFO off it. While assigned, the app writes the knob's base value
   plus the LFO to the FM-1 through the normal parameter queue (turning the knob moves its base; a change made on
