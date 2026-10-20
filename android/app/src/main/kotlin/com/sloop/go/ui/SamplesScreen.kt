@@ -238,10 +238,7 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, 
 
     Column(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { focus.clearFocus() } }) {
         // ---- pinned header: nav, slot pick with a short info, name, send, play on track ----
-        Row(Modifier.fillMaxWidth().background(cs.surface).horizontalScroll(rememberScrollState())
-            .padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            nav()
+        PinnedHeader(nav, headerStatus(state)) {
             Text("Samples", style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold, maxLines = 1)
             var slotMenu by remember { mutableStateOf(false) }

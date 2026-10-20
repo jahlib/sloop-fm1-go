@@ -279,7 +279,13 @@ class LfoEngine(
             val base = st.bases[t] ?: continue
             val desc = (if (t.scope == 0) s.pdesc else s.gdesc).getOrNull(t.id) ?: continue
             val range = desc.max - desc.min
-            val v = (base + (m * range * 0.5f).roundToInt()).coerceIn(desc.min, desc.max)
+            // The bigger the LFO's reach on this knob, the coarser the pieces it is sent in: a tiny swing goes out
+            // value by value, a reach of about 6 in steps of 2, 12 in 4, 24 in 8, 36 in 12 (about 3 pieces per
+            // half swing), so a wide LFO does not flood the queue.
+            val reach = st.amounts.sumOf { abs(it[t] ?: 0) } / 100f * range * 0.5f
+            val piece = (reach / 3f).roundToInt().coerceAtLeast(1)
+            val off = (m * range * 0.5f).roundToInt()
+            val v = (base + Math.round(off.toDouble() / piece).toInt() * piece).coerceIn(desc.min, desc.max)
             if (sent[t] == v) continue
             writeValue(t, v)
         }

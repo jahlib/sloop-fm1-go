@@ -36,6 +36,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
@@ -67,11 +68,10 @@ fun LiveScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, nav
     val lv by ctl.transport.collectAsState()
     val l = lv
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(end = 10.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            nav()
+        val cs = MaterialTheme.colorScheme
+        val hot = (l?.cpu ?: 0) > 85
+        PinnedHeader(nav, if (state.info.proto >= 12) "CPU ${l?.cpu ?: 0}%" else "", if (hot) cs.error else Color.Unspecified) {
             if (state.info.proto >= 12) {
-                val cs = MaterialTheme.colorScheme
                 val master = l?.master ?: 0
                 Text("${l?.bpm ?: 0} BPM", Modifier.clickable { ctl.liveTap(LAYER_GLO, KEY_TAP) }.padding(horizontal = 4.dp, vertical = 8.dp),
                     fontFamily = SloopFontFamily, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
@@ -79,9 +79,7 @@ fun LiveScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, nav
                     fontFamily = SloopFontFamily, style = MaterialTheme.typography.labelSmall,
                     color = if (master == 0) cs.onSurfaceVariant else cs.primary)
                 ThinSlider(if (master == 0) 100f / 126f else (master - 1) / 126f, master != 0,
-                    { ctl.liveMaster((it * 126f).toInt()) }, Modifier.weight(1f))
-                Text("CPU ${l?.cpu ?: 0}%", fontFamily = SloopFontFamily, style = MaterialTheme.typography.labelSmall,
-                    color = if ((l?.cpu ?: 0) > 85) cs.error else cs.onSurfaceVariant)
+                    { ctl.liveMaster((it * 126f).toInt()) }, Modifier.width(160.dp))
             }
         }
         if (state.info.proto < 12) {

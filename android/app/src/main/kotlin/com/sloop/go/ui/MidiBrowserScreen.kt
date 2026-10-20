@@ -30,6 +30,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.sloop.go.device.DeviceState
 import com.sloop.go.device.Link
@@ -41,7 +42,7 @@ import com.sloop.go.store.ClipKind
  * that track in the sequencer. Saving is done from the sequencer itself.
  */
 @Composable
-fun MidiBrowserScreen(vm: SloopViewModel, state: DeviceState, openSequencer: () -> Unit) {
+fun MidiBrowserScreen(vm: SloopViewModel, state: DeviceState, openSequencer: () -> Unit, nav: @Composable () -> Unit) {
     val store = vm.patterns
     var kind by remember { mutableStateOf(ClipKind.PIANO) }
     val items = remember(store.rev, kind) { store.list(kind) }
@@ -70,14 +71,21 @@ fun MidiBrowserScreen(vm: SloopViewModel, state: DeviceState, openSequencer: () 
         if (kind == ClipKind.DRUM) loadOnto(item, drumTrack) else load = item
     }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(8.dp, 0.dp, 8.dp, 96.dp),
+    val kindChips = @Composable {
+        for (k in ClipKind.entries) FilterChip(selected = kind == k, onClick = { kind = k; message = null },
+            label = { Text(k.title) })
+    }
+    Column(Modifier.fillMaxSize()) {
+    // connected: the shared header row (the nav cluster is embedded); otherwise the plain title, the cluster floats
+    if (ready) PinnedHeader(nav, headerStatus(state)) {
+        Text("MIDI patterns", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        kindChips()
+    }
+    LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(8.dp, if (ready) 8.dp else 0.dp, 8.dp, 96.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { ScreenHeader("MIDI patterns", state, NAV_INSET) }
-        item {
-            Row(Modifier.padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (k in ClipKind.entries) FilterChip(selected = kind == k, onClick = { kind = k; message = null },
-                    label = { Text(k.title) })
-            }
+        if (!ready) item { ScreenHeader("MIDI patterns", state, NAV_INSET) }
+        if (!ready) item {
+            Row(Modifier.padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { kindChips() }
         }
         message?.let { item { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.primary,
             style = MaterialTheme.typography.bodySmall) } }
@@ -100,6 +108,7 @@ fun MidiBrowserScreen(vm: SloopViewModel, state: DeviceState, openSequencer: () 
                 }
             }
         }
+    }
     }
 
     load?.let { item ->

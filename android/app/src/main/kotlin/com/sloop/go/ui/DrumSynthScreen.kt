@@ -317,9 +317,7 @@ fun DrumSynthScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
     val focus = LocalFocusManager.current
     Column(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { focus.clearFocus() } }) {
         // ---- pinned header: navigation, kit pick, name and the audition controls
-        Row(Modifier.fillMaxWidth().background(cs.surface).horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            nav()
+        PinnedHeader(nav, headerStatus(state)) {
             Text("Drum synth", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
             var kitMenu by remember { mutableStateOf(false) }
             Box {

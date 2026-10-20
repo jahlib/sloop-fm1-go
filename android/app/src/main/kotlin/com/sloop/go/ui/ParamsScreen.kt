@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -54,6 +55,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -171,7 +173,7 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, n
     LaunchedEffect(Unit) { while (true) androidx.compose.runtime.withFrameNanos { frame.value = it } }
 
     fun drop() {
-        val lead = 1      // the sound card comes before the groups
+        val lead = 0      // the groups are the grid's first items
         if (dragIndex < 0) { dragOffset = Offset.Zero; return }
         val info2 = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == dragIndex + lead }
         if (info2 != null) {
@@ -194,10 +196,8 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, n
         dragIndex = -1; dragOffset = Offset.Zero
     }
 
-    val shownLfo = remember { mutableIntStateOf(0) }
-    if (assign >= 0) shownLfo.intValue = assign          // the panel keeps its content while it slides away
     Column(Modifier.fillMaxSize()) {
-    SoundHeader(vm, state, nav, assign, { assign = it }, frame)
+    SoundHeader(vm, state, nav, { picker = true }, assign, { assign = it }, frame)
     Box(Modifier.weight(1f).fillMaxWidth()) {
     LazyVerticalStaggeredGrid(
         columns = StaggeredGridCells.Fixed(2),
@@ -207,88 +207,6 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, n
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalItemSpacing = 8.dp,
     ) {
-        // Track + preset/kit selectors: two dropdown buttons on one row.
-        item(key = "sound", span = StaggeredGridItemSpan.FullLine) {
-            Card(Modifier.fillMaxWidth()) {
-                Row(
-                    Modifier.fillMaxWidth().padding(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    var trkMenu by remember { mutableStateOf(false) }
-                    Box(Modifier.weight(1f)) {
-                        OutlinedButton(onClick = { trkMenu = true }, modifier = Modifier.fillMaxWidth()) {
-                            Icon(Icons.Filled.Layers, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    "Track",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Text(
-                                    "${state.selectedTrack + 1}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
-                        }
-                        DropdownMenu(expanded = trkMenu, onDismissRequest = { trkMenu = false }) {
-                            val ntrk = state.tracks?.ntrk ?: info.ntrk
-                            for (i in 0 until ntrk) {
-                                val label = state.tracks?.tracks?.getOrNull(i)?.let { e ->
-                                    "TRACK ${i + 1} · " +
-                                        (if (e.engine >= info.nengines) "DRUM" else info.engines.getOrNull(e.engine) ?: "?")
-                                } ?: "TRACK ${i + 1}"
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(label, fontWeight = if (i == state.selectedTrack) FontWeight.Bold else FontWeight.Normal)
-                                    },
-                                    onClick = { trkMenu = false; vm.controller.selectTrack(i) },
-                                )
-                            }
-                        }
-                    }
-                    run {
-                        val fm6 = !state.isDrum && state.dump?.engine == state.fm6Engine
-                        val name = if (state.isDrum) {
-                            state.pdesc.getOrNull(info.pe0)?.names?.getOrNull(state.paramValue(info.pe0)) ?: "Kit"
-                        } else if (fm6) {
-                            state.pdesc.getOrNull(info.pe0 + 7)?.names
-                                ?.getOrNull(state.paramValue(info.pe0 + 7))
-                                ?: "Patch ${state.paramValue(info.pe0 + 7) + 1}"
-                        } else state.dump?.let { d ->
-                            state.presetNames[d.engine]?.getOrNull(d.preset) ?: "Preset ${d.preset + 1}"
-                        } ?: "Preset"
-                        Box(Modifier.weight(1f)) {
-                            OutlinedButton(onClick = { picker = true }, modifier = Modifier.fillMaxWidth()) {
-                                Icon(
-                                    if (state.isDrum) Icons.Filled.GridView else Icons.Filled.MusicNote,
-                                    contentDescription = null, modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(
-                                        if (state.isDrum) "Kit" else if (fm6) "Patch" else "Preset",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Text(
-                                        name,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                                Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         items(count = groups.size, key = { groups[it].title }) { index ->
             val group = groups[index]
             val closed = group.title in collapsed
@@ -393,31 +311,23 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, n
             DrumSoundCard(vm)
         }
     }
-    androidx.compose.animation.AnimatedVisibility(assign >= 0, Modifier.align(Alignment.TopStart),
-        enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
-        exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut()) {
-        LfoPanel(vm, shownLfo.intValue, frame)
-    }
     }
     }
 }
 
-/** The pinned top row of the Sound page: play + menu, the title, the four LFO buttons (they scroll under the pinned parts). */
+/** The pinned header of the Sound page, the sequencer's row: track, preset, voice, then the four LFO buttons. */
 @Composable
-private fun SoundHeader(vm: SloopViewModel, state: DeviceState, nav: @Composable () -> Unit, assign: Int,
-                        onAssign: (Int) -> Unit, frame: androidx.compose.runtime.State<Long>) {
-    val cs = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().background(cs.surface), verticalAlignment = Alignment.CenterVertically) {
-        nav()
-        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Sound · T${state.selectedTrack + 1}", style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold, maxLines = 1)
-            LfoChips(vm, assign, onAssign, frame)
-        }
-        Text(state.queueError ?: if (state.queuedEdits > 0) "queue ${state.queuedEdits}" else "",
-            Modifier.padding(start = 8.dp, end = 12.dp), style = MaterialTheme.typography.labelSmall, maxLines = 1,
-            color = if (state.queueError != null) cs.error else cs.onSurfaceVariant)
+private fun SoundHeader(vm: SloopViewModel, state: DeviceState, nav: @Composable () -> Unit, onPick: () -> Unit,
+                        assign: Int, onAssign: (Int) -> Unit, frame: androidx.compose.runtime.State<Long>) {
+    PinnedHeader(nav, headerStatus(state), if (state.queueError != null) MaterialTheme.colorScheme.error else Color.Unspecified) {
+        TrackSelect(vm, state)
+        Text(state.soundLabel.substringAfter("· ") + " ▾",
+            Modifier.widthIn(max = 120.dp).clickable(onClick = onPick).padding(horizontal = 6.dp, vertical = 10.dp),
+            color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (!state.isDrum) VoiceSelect(vm, state)
+        HeaderSep()
+        LfoChips(vm, assign, onAssign, frame)
     }
 }
 

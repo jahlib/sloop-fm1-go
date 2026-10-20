@@ -408,7 +408,7 @@ fun PresetPicker(vm: SloopViewModel, state: DeviceState, onDismiss: () -> Unit) 
 }
 
 @Composable
-private fun TrackSelect(vm: SloopViewModel, state: DeviceState) {
+internal fun TrackSelect(vm: SloopViewModel, state: DeviceState) {
     val info = state.info ?: return
     var open by remember { mutableStateOf(false) }
     Box {
@@ -432,7 +432,7 @@ private fun TrackSelect(vm: SloopViewModel, state: DeviceState) {
 }
 
 @Composable
-private fun VoiceSelect(vm: SloopViewModel, state: DeviceState) {
+internal fun VoiceSelect(vm: SloopViewModel, state: DeviceState) {
     val idx = state.pdesc.indexOfFirst { it?.label == "VCE" }
     if (idx < 0) return
     val names = state.pdesc[idx]?.names.takeIf { !it.isNullOrEmpty() }
