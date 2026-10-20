@@ -4,6 +4,8 @@
 package com.sloop.go.ui
 
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
@@ -26,6 +28,7 @@ import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Layers
@@ -42,6 +45,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -49,6 +53,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -57,6 +62,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sloop.go.device.DeviceState
+import com.sloop.go.device.LfoTarget
 import com.sloop.go.device.Link
 import com.sloop.go.proto.Desc
 import com.sloop.go.proto.Fmt
@@ -156,10 +162,18 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
     val gridState = rememberLazyStaggeredGridState()
     var dragIndex by remember { mutableIntStateOf(-1) }
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
+    val lfoState by vm.lfo.state.collectAsState()
+    var assign by remember { mutableIntStateOf(-1) }               // the LFO whose amounts the knobs are setting, -1 none
+    var pendingRemove by remember { mutableStateOf<LfoTarget?>(null) }
+    LaunchedEffect(pendingRemove) { if (pendingRemove != null) { kotlinx.coroutines.delay(4000); pendingRemove = null } }
+    LaunchedEffect(assign) { pendingRemove = null }
+    val frame = remember { mutableStateOf(0L) }                    // drives the LFO scopes and knob rings, read while drawing
+    LaunchedEffect(Unit) { while (true) androidx.compose.runtime.withFrameNanos { frame.value = it } }
 
     fun drop() {
+        val lead = if (assign >= 0) 3 else 2      // header, [LFO settings], sound card come before the groups
         if (dragIndex < 0) { dragOffset = Offset.Zero; return }
-        val info2 = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == dragIndex + 2 }
+        val info2 = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == dragIndex + lead }
         if (info2 != null) {
             val cx = info2.offset.x + dragOffset.x + info2.size.width / 2
             val cy = info2.offset.y + dragOffset.y + info2.size.height / 2
@@ -168,7 +182,7 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                     cy >= it.offset.y && cy < it.offset.y + it.size.height
             }?.index?.let { target ->
                 val pinnedCount = groups.count { it.title in PINNED }
-                val t = (target - 2).coerceIn(pinnedCount, groups.size - 1)
+                val t = (target - lead).coerceIn(pinnedCount, groups.size - 1)
                 if (t != dragIndex) {
                     val g = groups.toMutableList()
                     g.add(t, g.removeAt(dragIndex))
@@ -189,7 +203,13 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
         verticalItemSpacing = 8.dp,
     ) {
         item(key = "header", span = StaggeredGridItemSpan.FullLine) {
-            ScreenHeader("Sound · Track ${state.selectedTrack + 1}", state, NAV_INSET)
+            ScreenHeader("Sound · Track ${state.selectedTrack + 1}", state, NAV_INSET) {
+                LfoChips(vm, assign, { assign = it }, frame)
+            }
+        }
+
+        if (assign >= 0) item(key = "lfos", span = StaggeredGridItemSpan.FullLine) {
+            LfoPanel(vm, assign, frame)
         }
 
         // Track + preset/kit selectors: two dropdown buttons on one row.
@@ -331,13 +351,39 @@ fun ParamsScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                         rows.chunked(4).forEach { groupRows ->
                             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                                 groupRows.forEach { (scope, id, d) ->
-                                    Box(Modifier.weight(1f)) {
-                                        val value = if (scope == 0) state.paramValue(id) else state.globalValue(id)
-                                        if (scope == 1 && id == 0) TextParamControl(d, value) { v ->
-                                            vm.controller.setParam(scope, id, v)
-                                        } else ParamControl(d, value, text = esyncText(state, v26, scope, id, value),
-                                            onLongPress = { addFav(scope, id) }) { v ->
-                                            vm.controller.setParam(scope, id, v)
+                                    val value = if (scope == 0) state.paramValue(id) else state.globalValue(id)
+                                    val target = LfoTarget(if (scope == 0) state.selectedTrack else -1, scope, id)
+                                    val eligible = !isToggle(d) && !isEnum(d) && !(scope == 1 && id == 0)
+                                    Box(Modifier.weight(1f).then(if (assign >= 0 && !eligible) Modifier.alpha(0.35f) else Modifier)) {
+                                        if (assign >= 0 && eligible) {
+                                            val pct = lfoState.amounts[assign][target]
+                                            LfoAmountKnob(d, pct ?: 0, LFO_COLORS[assign], pct != null,
+                                                onPct = { p -> vm.lfo.setAmount(assign, target, p, value) },
+                                                onLongPress = { if (pct != null) pendingRemove = target })
+                                            if (pct != null && pendingRemove == target) Box(
+                                                Modifier.matchParentSize().background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.92f))
+                                                    .clickable { pendingRemove = null; vm.lfo.remove(assign, target) },
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Icon(Icons.Filled.Close, contentDescription = "Remove LFO from this knob",
+                                                    modifier = Modifier.padding(4.dp).fillMaxSize(),
+                                                    tint = MaterialTheme.colorScheme.onErrorContainer)
+                                            }
+                                        } else if (scope == 1 && id == 0) TextParamControl(d, value) { v ->
+                                            vm.setParam(scope, id, v)
+                                        } else {
+                                            val shown = lfoState.bases[target] ?: value
+                                            val swing = lfoState.amounts.sumOf { kotlin.math.abs(it[target] ?: 0) } / 200f
+                                            val driver = lfoState.amounts.indexOfFirst { target in it }
+                                            val knobLfo = if (driver < 0 || !eligible) null else KnobLfo(swing, LFO_COLORS[driver]) {
+                                                frame.value
+                                                if (swing <= 0f) 0f
+                                                else (vm.lfo.modAt(target, System.nanoTime() / 1e9) * 0.5f / swing).coerceIn(-1f, 1f)
+                                            }
+                                            ParamControl(d, shown, text = esyncText(state, v26, scope, id, shown),
+                                                onLongPress = { addFav(scope, id) }, lfo = knobLfo) { v ->
+                                                vm.setParam(scope, id, v)
+                                            }
                                         }
                                     }
                                 }

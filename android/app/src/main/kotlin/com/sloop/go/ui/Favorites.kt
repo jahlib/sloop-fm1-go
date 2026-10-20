@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -35,6 +36,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import com.sloop.go.device.DeviceState
+import com.sloop.go.device.LfoTarget
 import kotlinx.coroutines.delay
 
 /** Pinned knobs shown in a side panel on every page; each is `scope * 1000 + id` (scope 0 = track param, 1 = global). */
@@ -78,6 +80,7 @@ fun rememberFavAdder(): (Int, Int) -> Unit {
 @Composable
 fun FavoritesPanel(vm: SloopViewModel, state: DeviceState, favs: Favorites) {
     var pending by remember { mutableStateOf<Int?>(null) }
+    val lfoState by vm.lfo.state.collectAsState()
     val haptic = LocalHapticFeedback.current
     LaunchedEffect(pending) { if (pending != null) { delay(4000); pending = null } }
     Surface(Modifier.width(88.dp).fillMaxHeight(), color = MaterialTheme.colorScheme.surfaceVariant, tonalElevation = 2.dp) {
@@ -87,9 +90,11 @@ fun FavoritesPanel(vm: SloopViewModel, state: DeviceState, favs: Favorites) {
                 val id = key % 1000
                 val desc = if (scope == 0) state.pdesc.getOrNull(id) else state.gdesc.getOrNull(id)
                 if (desc != null) Box(Modifier.fillMaxWidth()) {
-                    ParamControl(desc, if (scope == 0) state.paramValue(id) else state.globalValue(id),
+                    val current = if (scope == 0) state.paramValue(id) else state.globalValue(id)
+                    val shown = lfoState.bases[LfoTarget(if (scope == 0) state.selectedTrack else -1, scope, id)] ?: current
+                    ParamControl(desc, shown,
                         onLongPress = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); pending = key }) { v ->
-                        vm.controller.setParam(scope, id, v)
+                        vm.setParam(scope, id, v)
                     }
                     if (pending == key) Box(
                         Modifier.matchParentSize().background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.92f))

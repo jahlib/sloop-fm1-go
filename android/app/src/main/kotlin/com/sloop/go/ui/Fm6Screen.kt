@@ -340,6 +340,8 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit) {
                             }
                         }) { Text("Export bank") }
                         OutlinedButton(onClick = { ed.reset(); ed.rev++ }) { Text("Init voice") }
+                        Button(onClick = { ed.randomize(false) }) { Text("Randomize gently") }
+                        Button(onClick = { ed.randomize(true) }) { Text("Randomize full") }
                     }
                     if (ed.imported.isNotEmpty()) {
                         Text("Voices of the imported file (tap to edit):", style = MaterialTheme.typography.bodySmall,

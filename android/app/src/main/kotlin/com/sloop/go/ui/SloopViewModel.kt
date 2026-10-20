@@ -10,6 +10,8 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import com.sloop.go.device.DeviceController
 import com.sloop.go.device.DeviceState
+import com.sloop.go.device.LfoEngine
+import com.sloop.go.device.LfoTarget
 import com.sloop.go.midi.MidiDeviceDesc
 import com.sloop.go.proto.Fm6
 import com.sloop.go.store.PatternStore
@@ -35,6 +37,17 @@ class SloopViewModel(app: Application) : AndroidViewModel(app) {
     /** Work that must outlive the page that started it (a bank upload, a flash write). */
     private val jobs = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     fun launch(block: suspend () -> Unit) = jobs.launch { block() }
+
+    /** The four app-side LFOs of the Sound page. */
+    private val lfoScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val lfo = LfoEngine(controller, app.getSharedPreferences("lfo", 0), lfoScope)
+
+    /** A knob turned on a page: for a knob the LFOs drive this moves its base value, else the parameter itself. */
+    fun setParam(scope: Int, id: Int, value: Int) {
+        val s = state.value
+        val t = LfoTarget(if (scope == 0) s.selectedTrack else -1, scope, id)
+        if (lfo.state.value.modulated(t)) lfo.setBase(t, value) else controller.setParam(scope, id, value)
+    }
 
     /** The track the FM6 page edits for: its pick, else the selected track, else the first. */
     fun fm6Track(s: DeviceState): Int {
@@ -148,6 +161,7 @@ class SloopViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         jobs.cancel()
+        lfoScope.cancel()
         controller.release()
     }
 }

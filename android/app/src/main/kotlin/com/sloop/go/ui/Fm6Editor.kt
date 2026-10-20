@@ -65,6 +65,31 @@ class Fm6Editor(private val history: EditHistory? = null) {
         history?.dropKey("fm6")
     }
 
+    /**
+     * One undo step. Gently: every knob of all six operators random, the carriers kept audible (loud, fast attack,
+     * a release that ends at 0, no level scaling that could mute a range of keys). Full: every parameter of the
+     * voice random (operators, ALG, FB, pitch EG, LFO, transpose), nothing held back; only the name stays.
+     */
+    fun randomize(full: Boolean) {
+        val old = voice
+        val v = voice.copyOf()
+        val rnd = kotlin.random.Random
+        for (n in 1..Fm6.OPS) for ((name, max) in Fm6.OP) v[Fm6.at(n, name)] = rnd.nextInt(max + 1)
+        if (full) for (i in Fm6.PR1..Fm6.TRNSP) v[i] = rnd.nextInt(Fm6.max(i) + 1)
+        else for (n in Fm6.carriers(v[Fm6.ALG])) {
+            fun f(name: String) = Fm6.at(n, name)
+            v[f("OL")] = maxOf(v[f("OL")], 70)
+            v[f("R1")] = maxOf(v[f("R1")], 40)
+            v[f("L1")] = maxOf(v[f("L1")], 80)
+            v[f("L4")] = 0
+            v[f("LD")] = 0
+            v[f("RD")] = 0
+        }
+        voice = v
+        rev++
+        record(null, old)
+    }
+
     fun reset() {
         val old = voice
         voice = Fm6.init()

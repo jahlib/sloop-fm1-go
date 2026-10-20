@@ -269,13 +269,19 @@ val NAV_INSET = 100.dp
 
 /** Non-sticky header rendered as the first scrollable item, so it slides away on scroll. */
 @Composable
-fun ScreenHeader(title: String, state: DeviceState, navInset: Dp = 0.dp) {
+fun ScreenHeader(title: String, state: DeviceState, navInset: Dp = 0.dp, trailing: (@Composable () -> Unit)? = null) {
     Column(Modifier.fillMaxWidth().padding(start = 16.dp + navInset, top = 14.dp, end = 16.dp, bottom = 6.dp)) {
-        Text(
-            title,
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                title,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            if (trailing != null) {
+                Box(Modifier.weight(1f).padding(start = 12.dp), contentAlignment = Alignment.CenterStart) { trailing() }
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             val color = when (state.link) {
                 Link.READY -> SloopGreen

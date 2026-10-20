@@ -65,6 +65,13 @@ reported and discarded on disconnect. App-process death also loses queued edits 
   **SEND** queues the selected track's entire 64-step state, including rests, in order. You can
   continue editing while the queue drains. Switching back to Now with unsent drafts requires an
   explicit choice to send all drafts or discard them. Disconnect also discards unsent drafts.
+- **Sound LFOs**: four LFOs live in the app. Their buttons (each a small scope) sit in the Sound page's header; the
+  one in assign mode opens its settings: shape, rate (1/32 to 16 bars, with triplets), phase and curve (soft to
+  sharp). They run on the device's BPM and lock to its playhead when play starts.
+  The LFO button lights every knob: dragging a knob then sets how much (-100..100 %) of that LFO it gets, drawn as a
+  bipolar arc; hold a knob and confirm to take the LFO off it. While assigned, the app writes the knob's base value
+  plus the LFO to the FM-1 through the normal parameter queue (turning the knob moves its base; a change made on
+  the FM-1 becomes the new base). Assignments are kept on the phone.
 - **Mixer**: per-track level, mute, and selecting the track to edit.
 - **Device**: pick/connect/disconnect a MIDI device, firmware info.
 
@@ -113,7 +120,7 @@ cd android
 
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`. Or copy it to the phone and tap it
 (allow "install from unknown sources"). Current `applicationId` is `com.sloop.go`, `versionCode`
-is 46 and `versionName` is 1.7.20. For each major update increment `versionCode` and update
+is 47 and `versionName` is 1.7.21. For each major update increment `versionCode` and update
 `versionName` in `android/app/build.gradle`, and update the APK link in the root `README.md`
 to the new release (`releases/download/<tag>/sloop_go_<version>.apk`); keep the same package
 and signing key to install updates over existing installations with `adb install -r`.

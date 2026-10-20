@@ -25,7 +25,7 @@ Every release is tested on my own phone, connected to my own FM-1 running the la
 
 ## Install on your phone
 
-**⬇ [Download sloop_go_1.7.20.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.7.20/sloop_go_1.7.20.apk)**
+**⬇ [Download sloop_go_1.7.21.apk](https://github.com/jahlib/sloop-fm1-go/releases/download/1.7.21/sloop_go_1.7.21.apk)**
 — other versions live on the [Releases](https://github.com/jahlib/sloop-fm1-go/releases) page.
 
 0. You need an **M-VAVE FM-1** device with the latest [**SLOOP** firmware](https://github.com/isod89/sloop-fm1)

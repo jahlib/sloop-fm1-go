@@ -79,6 +79,9 @@ class DeviceController(context: Context) {
     val transport: StateFlow<Live?> = _transport.asStateFlow()
     val recordingTrace = RecordingTrace()
 
+    /** A parameter the FM-1 itself changed (CHANGED push of the selected track or a global): scope, id, value. */
+    @Volatile var onParamPush: ((Int, Int, Int) -> Unit)? = null
+
     /** Undo / redo, in RAM only: every edit is also noted here and is put back through the very same queue. */
     val history = EditHistory(onChange = { u, r -> _state.update { it.copy(canUndo = u, canRedo = r) } })
     private val historyMutex = Mutex()
@@ -413,14 +416,15 @@ class DeviceController(context: Context) {
      * Parameter write (selected track). scope 0 = P_*, 1 = G_*. The UI updates at once, while the queue
      * carries the value in up to 12 steps from the last value the device got, so big sweeps glide.
      */
-    fun setParam(scope: Int, id: Int, value: Int, record: Boolean = true) {
+    fun setParam(scope: Int, id: Int, value: Int, record: Boolean = true, trackOverride: Int? = null,
+                 glide: Boolean = true, optimistic: Boolean = true) {
         val s = _state.value
         if (s.link != Link.READY) return
-        val track = s.selectedTrack
+        val track = trackOverride ?: s.selectedTrack
         val desc = (if (scope == 0) s.pdesc else s.gdesc).getOrNull(id)
         val was = if (scope == 0) s.paramValue(id) else s.globalValue(id)
         // Discrete choices write once: stepping through them would flip intermediate patches/engines.
-        val discrete = desc != null &&
+        val discrete = !glide || desc != null &&
             (desc.fmt == Fmt.ENUM || desc.fmt == Fmt.ONOFF || desc.names.isNotEmpty())
         val chunk = maxOf(1, ((desc?.max ?: 127) - (desc?.min ?: 0)) / 12)
         val ok = synchronized(pendingLock) {
@@ -447,7 +451,8 @@ class DeviceController(context: Context) {
         }
         _state.update { it.copy(queuedEdits = synchronized(pendingLock) { edits.size }) }
         editSignal.trySend(Unit)
-        _state.update { it.withParam(scope, id, value) } // optimistic UI
+        if (optimistic && (scope == 1 || track == s.selectedTrack))
+            _state.update { it.withParam(scope, id, value) } // optimistic UI
         if (record) {
             // swapping the engine changes what every parameter of the track means: older edits cannot be put back
             if (scope == 1 && desc?.label == "ENG") history.dropTrack(track)
@@ -1650,6 +1655,7 @@ class DeviceController(context: Context) {
             Cmd.CHANGED -> {
                 val pv = Parse.param(args)
                 _state.update { s -> s.withParam(pv.scope, pv.id, pv.value) }
+                onParamPush?.invoke(pv.scope, pv.id, pv.value)
             }
             Cmd.RELOAD -> {
                 if (nativeTransposeTrack != null) return
