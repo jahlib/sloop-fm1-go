@@ -20,14 +20,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -39,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -60,6 +64,15 @@ val LFO_COLORS = listOf(Color(0xFFFFA726), Color(0xFF26C6DA), Color(0xFFEC407A),
 @Composable
 fun LfoChips(vm: SloopViewModel, assign: Int, onAssign: (Int) -> Unit, frame: State<Long>) {
     val st by vm.lfo.state.collectAsState()
+    // The first tap on an LFO warns once (per install) that assigned knobs write to the device all the time.
+    val warnPrefs = LocalContext.current.getSharedPreferences("lfo", 0)
+    var warn by remember { mutableStateOf(false) }
+    var pending by remember { mutableIntStateOf(-1) }
+    fun closeWarn() {
+        warn = false
+        warnPrefs.edit().putBoolean("warned", true).apply()
+        if (pending >= 0) { onAssign(pending); pending = -1 }
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
         for (i in 0 until LFO_COUNT) {
             val color = LFO_COLORS[i]
@@ -69,7 +82,11 @@ fun LfoChips(vm: SloopViewModel, assign: Int, onAssign: (Int) -> Unit, frame: St
             Box(Modifier.padding(horizontal = 3.dp).size(width = 52.dp, height = 36.dp).clip(RoundedCornerShape(8.dp))
                 .background(if (on) color else color.copy(alpha = 0.14f))
                 .border(1.dp, color, RoundedCornerShape(8.dp))
-                .clickable { onAssign(if (on) -1 else i) }) {
+                .clickable {
+                    if (on) onAssign(-1)
+                    else if (warnPrefs.getBoolean("warned", false)) onAssign(i)
+                    else { pending = i; warn = true }
+                }) {
                 Canvas(Modifier.matchParentSize()) {
                     frame.value
                     val pad = 7.dp.toPx()
@@ -106,6 +123,10 @@ fun LfoChips(vm: SloopViewModel, assign: Int, onAssign: (Int) -> Unit, frame: St
             }
         }
     }
+    if (warn) AlertDialog(onDismissRequest = ::closeWarn, title = { Text("LFO") },
+        text = { Text("Careful: while the FM-1 plays, every knob an LFO is assigned to keeps receiving parameter " +
+            "changes. Wide or fast LFOs on several knobs can flood the request queue and slow everything else down.") },
+        confirmButton = { TextButton(onClick = ::closeWarn) { Text("Got it") } })
 }
 
 @Composable

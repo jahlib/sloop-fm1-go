@@ -281,9 +281,17 @@ class LfoEngine(
             val range = desc.max - desc.min
             // The bigger the LFO's reach on this knob, the coarser the pieces it is sent in: a tiny swing goes out
             // value by value, a reach of about 6 in steps of 2, 12 in 4, 24 in 8, 36 in 12 (about 3 pieces per
-            // half swing), so a wide LFO does not flood the queue.
-            val reach = st.amounts.sumOf { abs(it[t] ?: 0) } / 100f * range * 0.5f
-            val piece = (reach / 3f).roundToInt().coerceAtLeast(1)
+            // half swing), so a wide LFO does not flood the queue. The LFO's speed counts too: that table is for
+            // a 1 BAR cycle at 120 BPM; a slower LFO (4 BAR) sweeps the same reach over more time, so it can go
+            // in finer pieces, a faster one needs coarser ones. Pieces never exceed 12.
+            val cps = bpm / 60.0
+            var reach = 0.0
+            for (i in 0 until LFO_COUNT) {
+                val a = abs(st.amounts[i][t] ?: continue)
+                val speed = cps / LFO_RATES[st.cfg[i].rate.coerceIn(0, LFO_RATES.lastIndex)].second / 0.5
+                reach += a / 100.0 * range * 0.5 * speed
+            }
+            val piece = (reach / 3.0).roundToInt().coerceIn(1, 12)
             val off = (m * range * 0.5f).roundToInt()
             val v = (base + Math.round(off.toDouble() / piece).toInt() * piece).coerceIn(desc.min, desc.max)
             if (sent[t] == v) continue

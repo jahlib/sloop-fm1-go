@@ -50,7 +50,7 @@ fun PinnedHeader(nav: @Composable () -> Unit, status: String, statusColor: Color
     val navW = with(density) { navPx.toDp() }
     val surface = MaterialTheme.colorScheme.surface
     BoxWithConstraints(Modifier.fillMaxWidth().background(surface)) {
-        Row(Modifier.horizontalScroll(rememberScrollState()).clipToBounds()
+        Row(Modifier.align(Alignment.Center).fillMaxWidth().horizontalScroll(rememberScrollState()).clipToBounds()
                 .padding(start = navW + 4.dp, end = statusW + 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
             content = content)
