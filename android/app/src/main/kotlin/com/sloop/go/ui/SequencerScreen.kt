@@ -952,7 +952,7 @@ private fun rememberPlayPhase(vm: SloopViewModel, track: Int): androidx.compose.
     LaunchedEffect(track) {
         val clock = vm.controller.clock
         while (true) {
-            if (clock.playing) androidx.compose.runtime.withFrameNanos { ph.floatValue = clock.position(track, System.nanoTime() / 1e9) }
+            if (clock.playing) androidx.compose.runtime.withFrameNanos { ph.floatValue = clock.position(track, System.nanoTime() / 1e9, smooth = true) }
             else { ph.floatValue = -1f; kotlinx.coroutines.delay(150) }
         }
     }

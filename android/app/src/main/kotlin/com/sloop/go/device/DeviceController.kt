@@ -526,6 +526,44 @@ class DeviceController(context: Context) {
             val play = if (lv.playAsked) s.playing else lv.playing
             if (s.playing == play) s else s.copy(playing = play)
         }
+        followDeviceTrack(lv.sel)
+    }
+
+    private var followJob: Job? = null
+    @Volatile private var rearming = false
+
+    private suspend fun rearmWatch() {
+        if (rearming) return
+        rearming = true
+        try {
+            runCatching {
+                request(Requests.watch(3), quiet = true)
+                if (_state.value.link == Link.READY) reloadAfterChange()
+            }
+        } finally { rearming = false }
+    }
+
+    /**
+     * A track picked on the FM-1 arrives as a RELOAD push; LIVE's selected track backs it up. The firmware turns WATCH
+     * off after 3 s without a request (a stalled queue did that), and then no push comes at all: if the push has not
+     * done it shortly after LIVE showed another track, WATCH is armed again and the track is read here.
+     */
+    private fun followDeviceTrack(sel: Int) {
+        val s = _state.value
+        val ntrk = (s.info?.ntrk ?: 0).takeIf { it > 0 } ?: return
+        if (sel !in 0 until ntrk || sel == s.selectedTrack || s.link != Link.READY) return
+        if (followJob?.isActive == true || nativeTransposeTrack != null) return
+        followJob = scope.launch {
+            delay(300)
+            val now = _state.value
+            if (now.link != Link.READY || now.selectedTrack == sel || _transport.value?.sel != sel) return@launch
+            runCatching {
+                request(Requests.watch(3), quiet = true)
+                resyncJob?.cancel(); resyncJob = null
+                history.dropTrack(now.selectedTrack)
+                reloadAfterChange()
+            }
+        }
     }
 
     // ---------------------------------------------------------------- tracks ---
@@ -1450,22 +1488,25 @@ class DeviceController(context: Context) {
         for (unit in editSignal) {
             while (true) {
                 val next = synchronized(pendingLock) {
-                    val e = edits.firstOrNull()
-                    // A step write into a track being recorded would fight the live recorder's chains.
-                    val blocked = when (e) {
+                    // A step write into a track being recorded would fight the live recorder's chains: it waits, but
+                    // the knobs (parameter and mix edits) behind it go on, so the Sound page keeps working meanwhile.
+                    fun blocked(e: UserEdit) = when (e) {
                         is UserEdit.Synth -> recordingTrack(e.track)
                         is UserEdit.Transpose -> recordingTrack(e.track)
                         is UserEdit.Drum -> recordingActive()
                         else -> false
                     }
-                    if (queuePaused || e == null || blocked) null
+                    val head = edits.firstOrNull()
+                    val e = if (head == null || !blocked(head)) head
+                        else edits.firstOrNull { it is UserEdit.Parameter || it is UserEdit.Mix }
+                    if (queuePaused || e == null) null
                     else (e to editGeneration).also { sending = true }
                 } ?: break
                 val result = runCatching { sendEdit(next.first) }
                 val current = synchronized(pendingLock) {
                     if (next.second != editGeneration) false else {
                         sending = false
-                        if (result.isSuccess && edits.firstOrNull() == next.first) edits.removeFirst()
+                        if (result.isSuccess) edits.indexOfFirst { it === next.first }.takeIf { it >= 0 }?.let { edits.removeAt(it) }
                         else if (result.isFailure) queuePaused = true
                         true
                     }
@@ -1615,6 +1656,10 @@ class DeviceController(context: Context) {
     /** Sends one request and awaits its reply. Serialized; retries once on timeout. */
     private suspend fun request(req: Req, timeout: Long = 400, retries: Int = 1, quiet: Boolean = false): IntArray {
         val c = conn ?: throw IOException("not connected")
+        // The firmware turns WATCH off after 3 s without a request: no CHANGED / RELOAD / STEP_CHANGED pushes come any
+        // more. After such a silence, arm it again and re-read what may have changed meanwhile.
+        if (req.cmd != Cmd.WATCH && lastSent > 0 && SystemClock.elapsedRealtime() - lastSent > 2800 &&
+            _state.value.link == Link.READY && (_state.value.info?.proto ?: 0) >= 2) scope.launch { rearmWatch() }
         return linkMutex.withLock {
             var attempt = 0
             var result: IntArray? = null
@@ -1667,16 +1712,18 @@ class DeviceController(context: Context) {
                 if (System.currentTimeMillis() < selfReloadUntil) return
                 resyncJob?.cancel(); resyncJob = null
                 history.dropTrack(_state.value.selectedTrack)
-                scope.launch { runCatching { reloadAfterChange() } }
+                followJob = scope.launch { runCatching { reloadAfterChange() } }
             }
             Cmd.STEP_CHANGED -> {
                 val sc = Parse.stepChanged(args)
                 if (nativeTransposeTrack == sc.track) return
                 if (sc.track != _state.value.selectedTrack) return
                 // While the device records, a pushed step can be read mid-chain (a pure-CONT NOTE
-                // before the attack carrying it): take one clean full read once pushes settle.
+                // before the attack carrying it): it is shown at once anyway (batched, read shortly after), and one
+                // clean full read once pushes settle or all keys are up puts the whole track right.
                 if (!recordingTrack(sc.track))
                     scope.launch { runCatching { reloadOneStep(sc.index, sc.track) } }
+                else queueRecordedStep(sc.index, sc.track)
                 scheduleResync()
             }
             Cmd.TRACK_CHANGED -> {
@@ -1763,18 +1810,48 @@ class DeviceController(context: Context) {
      * device holds.
      */
     private fun scheduleResync(delayMs: Long = 1200) {
+        // A push only postpones a quiet-period read; it never pushes back a sooner one (all keys up: 300 ms).
+        val at = SystemClock.elapsedRealtime() + delayMs
+        if (resyncJob?.isActive == true && resyncAt in 1 until at && delayMs >= 1200 && resyncFast) return
         resyncJob?.cancel()
+        resyncAt = at
+        resyncFast = delayMs < 1200
         resyncJob = scope.launch {
             delay(delayMs)
             val s = _state.value
             val info = s.info ?: return@launch
             val dump = s.dump ?: return@launch
             if (s.link != Link.READY) return@launch
-            if (synchronized(pendingLock) { edits.isNotEmpty() || sending }) { scheduleResync(); return@launch }
+            if (stepEditsPending()) { resyncFast = false; scheduleResync(); return@launch }
             runCatching {
                 loadSteps(info, dump, unchangedSince = s)
                 if (_state.value.selectedTrack == s.selectedTrack && _state.value.link == Link.READY)
                     loadStepExtras(info)
+            }
+        }
+    }
+
+    @Volatile private var resyncAt = 0L
+    @Volatile private var resyncFast = false
+
+    /** Our own step writes queued or in flight (parameter and mix edits, e.g. LFOs, do not change steps). */
+    private fun stepEditsPending(): Boolean = synchronized(pendingLock) {
+        edits.any { it is UserEdit.Synth || it is UserEdit.Drum || it is UserEdit.Transpose }
+    }
+
+    private val recordedSteps = HashSet<Int>()
+    private var recordedJob: Job? = null
+
+    /** A step the recorder pushed: read it soon (pushes in the same moment are read together), so the note shows now. */
+    private fun queueRecordedStep(index: Int, track: Int) {
+        synchronized(recordedSteps) { recordedSteps.add(index) }
+        if (recordedJob?.isActive == true) return
+        recordedJob = scope.launch {
+            delay(120)
+            val list = synchronized(recordedSteps) { recordedSteps.toList().also { recordedSteps.clear() } }
+            for (i in list.sorted()) {
+                if (_state.value.selectedTrack != track) break
+                runCatching { reloadOneStep(i, track) }
             }
         }
     }
@@ -1819,8 +1896,9 @@ class DeviceController(context: Context) {
                     delay(if (lv.playing) 120 else 450)
                     if (conn == null) break
                     if ((lv.info?.proto ?: 0) < 12 || lv.link != Link.READY) continue
-                    val editsWaiting = synchronized(pendingLock) { edits.isNotEmpty() && !queuePaused }
-                    if (editsWaiting || linkMutex.isLocked) continue
+                    // Not skipped while edits wait: a busy queue (LFOs) would starve the playhead and the REC state
+                    // (a step edit held back for a recording track would then wait forever). The link lock is fair,
+                    // so the poll just takes its turn between edits.
                     runCatching { applyLive(Parse.live(request(Requests.live(0), timeout = 300, retries = 0, quiet = true))) }
                 }
             }
