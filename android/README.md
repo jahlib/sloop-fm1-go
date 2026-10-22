@@ -79,6 +79,10 @@ Also: **FM6 patches** (list/load/store/erase, DX7 SysEx import/export from phone
 SLOOP 2.4, per-step nudge / fill / parameter locks in the step editor. SLOOP 2.6's new parameters (INSERT, LFO 2,
 ENV SYNC, ANALOG filter TYPE, global MIDI and TEXTURE) are on the Sound page; they only appear on a 2.6 device. SLOOP 2.7 (protocol v12): GLO > MIDI 3, drum TUNE / DECAY, the FM-1's real
 Play / Stop state and playhead (polled through `LIVE`, command 77) and looping sample zones (zone `looped` = 2).
+SLOOP 2.8 (protocol still v12, 50 globals): the punch-in FX fade (global 49) is on the Sound page's FX group and only
+appears on a 2.8 device. 2.8's legato flag (`SF_LEG`, bit 7 of a step's flags) cannot be read or written over SysEx, so
+editing a step of a MONO / LEGATO track retriggers a note that was recorded legato; the sequencer warns about this once.
+Filter resonance is a menu setting of the FM-1 (AUDIO > FILTER RESO) and is not in the editor protocol.
 
 Not yet ported: projects, user-preset bank, sample upload, backup/restore, live playhead.
 The protocol for them is documented in `web/EDITOR_PROTOCOL.md` of [isod89/sloop-fm1](https://github.com/isod89/sloop-fm1).
@@ -120,7 +124,7 @@ cd android
 
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`. Or copy it to the phone and tap it
 (allow "install from unknown sources"). Current `applicationId` is `com.sloop.go`, `versionCode`
-is 48 and `versionName` is 1.7.22. For each major update increment `versionCode` and update
+is 49 and `versionName` is 1.7.23. For each major update increment `versionCode` and update
 `versionName` in `android/app/build.gradle`, and update the APK link in the root `README.md`
 to the new release (`releases/download/<tag>/sloop_go_<version>.apk`); keep the same package
 and signing key to install updates over existing installations with `adb install -r`.

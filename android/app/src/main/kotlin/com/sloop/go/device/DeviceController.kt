@@ -1068,6 +1068,9 @@ class DeviceController(context: Context) {
 
     /** STEP_SET cannot carry SF_CONT (SLOOP 2.7). Match the stored reply flags locally;
      * length edits normally write only TIE/REST steps and leave the NOTE flags untouched. */
+    /** Counts note edits written on a MONO / LEGATO / UNISON track: SLOOP 2.8's SF_LEG (legato) bit is not in STEP_SET. */
+    val singleVoiceEdits = MutableStateFlow(0)
+
     private fun applySynthBatch(requested: List<UserEdit.Synth>, record: Boolean = true,
                                 intent: List<PNote>? = null): Boolean {
         val batch = requested.map { e ->
@@ -1077,6 +1080,7 @@ class DeviceController(context: Context) {
         if (s.link != Link.READY || batch.isEmpty() ||
             batch.any { it.track != s.selectedTrack || it.index !in s.steps.indices }) return false
         if (s.sequencerMode == SequencerMode.NOW && !enqueueBatch(batch)) return false
+        if (!s.voicePoly) singleVoiceEdits.update { it + 1 }
         if (record) history.transaction {
             batch.forEach { e ->
                 val was = s.steps[e.index]

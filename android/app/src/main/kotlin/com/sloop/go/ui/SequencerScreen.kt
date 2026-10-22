@@ -223,6 +223,18 @@ fun SequencerScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit
         if (state.drumGrid) DrumStepEditor(vm, state, selected)
         else StepEditor(vm, state, state.steps.getOrNull(selected), selected, state.steps, state.patternLength)
     }
+    // The first note edit on a MONO / LEGATO / UNISON track warns once: SLOOP 2.8's legato bit cannot be written over SysEx.
+    val legEdits by vm.controller.singleVoiceEdits.collectAsState()
+    var legWarn by remember { mutableStateOf(false) }
+    LaunchedEffect(legEdits) { if (legEdits > 0 && !prefs.getBoolean("legWarned", false)) legWarn = true }
+    if (legWarn) {
+        fun closeLeg() { legWarn = false; prefs.edit().putBoolean("legWarned", true).apply() }
+        AlertDialog(onDismissRequest = ::closeLeg, title = { Text("Legato notes") },
+            text = { Text("On SLOOP 2.8, MONO and LEGATO tracks record legato notes with a flag the editor protocol cannot " +
+                "carry. Editing a step here from the app rewrites it as an ordinary note, so a note recorded legato plays " +
+                "again (retriggered) after the edit.") },
+            confirmButton = { TextButton(onClick = ::closeLeg) { Text("Got it") } })
+    }
     if (askClear) AlertDialog(
         onDismissRequest = { askClear = false },
         title = { Text("Clear pattern?") },

@@ -81,6 +81,7 @@ private data class Page(
 private const val P_STRUM = 51  // SLOOP 2.4: chord strum (ms per note) and voice leading, after TFLT
 private const val P_VLEAD = 52
 private const val G_DRDLY = 32  // SLOOP 2.5: the drums' delay send (absent on 2.4: gdesc has no entry)
+private const val G_FXFADE = 49 // SLOOP 2.8: the punch-in FX fade (absent before: gdesc has no entry)
 private const val P_TFLT = 50   // SLOOP 2.4: the track's filter; absent on older firmware (pe0 <= 50)
 private const val PE0_26 = 63   // SLOOP 2.6: ten track parameters (INSERT 53..57, FTYPE 58, ESYNC 59, LFO 2 60..62) came before P_E0
 private const val P_ESYNC = 59  // ENV SYNC: ATK (1), DEC (2) and REL (4) are note values of the tempo
@@ -128,6 +129,7 @@ private fun layout(pe0: Int): List<Group> = listOf(
     Group("FX", listOfNotNull(
         Page("FX", 0, listOf(33, 34, 35, 36)),
         Page("SLICER", 0, listOf(45, 46, 47, 48)),
+        Page("FX FADE", 1, listOf(G_FXFADE)),
         Page("DELAY", 1, listOf(4, 5, 6, 7)),
         Page("REVERB / CHORUS", 1, listOf(8, 9, 10, 11)),
         if (pe0 >= PE0_26) Page("INSERT", 0, listOf(53, 54, 55, 56)) else null,
