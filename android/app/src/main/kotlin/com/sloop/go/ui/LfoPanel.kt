@@ -119,14 +119,26 @@ fun LfoChips(vm: SloopViewModel, assign: Int, onAssign: (Int) -> Unit, frame: St
                         vm.lfo.setCfg(i, cfg.copy(phase = it))
                     }
                     MiniMenu(LFO_CURVES[cfg.curve], LFO_CURVES, color, 80.dp) { vm.lfo.setCfg(i, cfg.copy(curve = it)) }
+                    ClearButton("CLEAR ${st.amounts[i].size}", color, st.amounts[i].isNotEmpty()) { vm.lfo.removeAll(i) }
                 }
             }
         }
+        ClearButton("CLEAR ALL", MaterialTheme.colorScheme.error, st.amounts.any { it.isNotEmpty() } || st.bases.isNotEmpty(),
+            Modifier.padding(start = 6.dp)) { vm.lfo.removeAll() }
     }
     if (warn) AlertDialog(onDismissRequest = ::closeWarn, title = { Text("LFO") },
         text = { Text("Careful: while the FM-1 plays, every knob an LFO is assigned to keeps receiving parameter " +
             "changes. Wide or fast LFOs on several knobs can flood the request queue and slow everything else down.") },
         confirmButton = { TextButton(onClick = ::closeWarn) { Text("Got it") } })
+}
+
+/** Takes assignments off their knobs (they go back to their base); dimmed and inert when there is nothing to remove. */
+@Composable
+private fun ClearButton(label: String, color: Color, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Text("✕ $label", modifier.border(1.dp, color.copy(alpha = if (enabled) 0.8f else 0.3f), RoundedCornerShape(6.dp))
+        .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 8.dp, vertical = 9.dp),
+        style = MaterialTheme.typography.labelMedium, maxLines = 1, fontFamily = SloopFontFamily,
+        color = color.copy(alpha = if (enabled) 1f else 0.4f))
 }
 
 @Composable

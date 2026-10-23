@@ -164,12 +164,31 @@ class LfoEngine(
         _state.value = after
         if (!still) {
             sent.remove(t)
-            before.bases[t]?.let { b ->
+            val cs = ctl.state.value
+            val reachable = t.scope != 0 || t.track == cs.selectedTrack ||
+                ((cs.info?.proto ?: 0) >= 4 && t.id < (cs.info?.pe0 ?: 0))   // as apply(): engine params only while selected
+            if (reachable) before.bases[t]?.let { b ->
                 ctl.setParam(t.scope, t.id, b, record = false,
                     trackOverride = if (t.scope == 0) t.track else null, glide = false)
             }
         }
         save()
+    }
+
+    /**
+     * Takes LFO [i] (all of them when null) off every knob it drives, whether the knob is on screen or not (an LFO set on
+     * another track keeps driving that track while the page shows this one; an engine change moves ids): the knobs no LFO
+     * drives any more go back to their base. Clearing all also drops every leftover base and write record.
+     */
+    fun removeAll(i: Int? = null) {
+        for (k in 0 until LFO_COUNT)
+            if (i == null || i == k) for (t in _state.value.amounts[k].keys.toList()) remove(k, t)
+        if (i == null) {
+            _state.update { s -> s.copy(amounts = List(LFO_COUNT) { emptyMap() }, bases = emptyMap()) }
+            sent.clear()
+            synchronized(recent) { recent.clear() }
+            save()
+        }
     }
 
     /** The user turned a driven knob: that is its new base. */
