@@ -82,6 +82,12 @@ Play / Stop state and playhead (polled through `LIVE`, command 77) and looping s
 SLOOP 2.8 (protocol still v12, 50 globals): the punch-in FX fade (global 49) is on the Sound page's FX group and only
 appears on a 2.8 device. 2.8's legato flag (`SF_LEG`, bit 7 of a step's flags) cannot be read or written over SysEx, so
 editing a step of a MONO / LEGATO track retriggers a note that was recorded legato; the sequencer warns about this once.
+SLOOP 2.8.3 (protocol still v12, step format still 2.7's): its changes are firmware-side — a held POLY note that keeps
+sounding under the notes played over it (its `SF_CONT` chain now runs on under later NOTE steps, "a long bass under a
+melody"), steadier drum-voice stealing, click-free sample retrigger and second-core hardening — with nothing new on the
+wire. The app needs no change for it: those `SF_CONT` chains are exactly what the POLY piano roll already decodes as
+true overlapping bars (`NoteModel.decodeNotes`), so a 2.8.3-recorded tail reads back as the bar it is; a step write still
+cannot carry `SF_CONT`, so a bar drawn under a later attack is released there on the device as before.
 Filter resonance is a menu setting of the FM-1 (AUDIO > FILTER RESO) and is not in the editor protocol.
 
 Not yet ported: projects, user-preset bank, sample upload, backup/restore, live playhead.

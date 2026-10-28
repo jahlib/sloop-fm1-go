@@ -96,7 +96,10 @@ loading a longer clip grows the pattern length to fit it). Only the notes are st
 
 Requires a phone with USB host (OTG) and a USB-C cable to the FM-1. Follows SLOOP 2.7 (editor protocol v12): the Play / Stop button and the sequencer's playhead follow the FM-1 itself (LIVE);
 samples can loop (LOOP, LOOP+TAIL);
-features that need newer firmware are hidden or disabled on older SLOOP.
+features that need newer firmware are hidden or disabled on older SLOOP. Up to date with **SLOOP 2.8.3** — its changes (held
+POLY notes that keep sounding under later ones, steadier drum-voice stealing, click-free sample retrigger, second-core hardening)
+are firmware playback fixes that keep the same editor protocol (v12) and the SLOOP 2.7 step format, so nothing here had to change:
+a note recorded on a 2.8.3 device as a long tail running under a melody reads back in the piano roll as the overlapping bar it is.
 
 ## Build
 
