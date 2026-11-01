@@ -197,6 +197,80 @@ object Fm6 {
     /** The operator (1..6) with the feedback loop of algorithm [a]. */
     fun feedbackOp(a: Int) = (1..6).firstOrNull { ALGS[a and 31][6 - it] and 0xc0 == 0xc0 }
 
+    /**
+     * An algorithm as a graph: [mods] maps an operator to the operators that modulate it, [carriers] go to the output,
+     * the feedback loop runs from [fbFrom] into [fbTo] (the same operator for a self loop; DX7 algorithms 4 and 6 loop
+     * back over three and two operators).
+     */
+    class Alg(val mods: Map<Int, List<Int>>, val carriers: List<Int>, val fbFrom: Int?, val fbTo: Int?) {
+        /** The operators [op] modulates. */
+        fun targets(op: Int): List<Int> = mods.filterValues { op in it }.keys.sorted()
+    }
+
+    /**
+     * Reads algorithm [a] (0..31) from its bus flags, as msfa's FmCore runs it, operator 6 first: bits 0-1 the output
+     * (0 the mix, 1 / 2 a bus), bit 2 add to the bus instead of replacing it, bits 4-5 the input bus, bits 6-7 feedback
+     * in / out.
+     */
+    fun alg(a: Int): Alg {
+        val f = ALGS[a and 31]
+        var bus1 = emptyList<Int>()
+        var bus2 = emptyList<Int>()
+        val mods = HashMap<Int, List<Int>>()
+        val carriers = ArrayList<Int>()
+        var fbFrom: Int? = null
+        var fbTo: Int? = null
+        for (op in 6 downTo 1) {
+            val b = f[6 - op]
+            val input = when { b and 0x10 != 0 -> bus1; b and 0x20 != 0 -> bus2; else -> emptyList() }
+            if (input.isNotEmpty()) mods[op] = input.sorted()
+            if (b and 0x80 != 0) fbFrom = op
+            if (b and 0x40 != 0) fbTo = op
+            when (b and 3) {
+                0 -> carriers += op
+                1 -> bus1 = if (b and 4 != 0) bus1 + op else listOf(op)
+                else -> bus2 = if (b and 4 != 0) bus2 + op else listOf(op)
+            }
+        }
+        return Alg(mods, carriers.sorted(), fbFrom, fbTo)
+    }
+
+    /**
+     * Where algorithm [a]'s operators sit in the usual DX7 drawing: the carriers on row 0 left to right in operator
+     * order, each modulator a row above what it modulates, centred over several of them ([x] in columns, maybe halves).
+     */
+    class AlgLayout(val alg: Alg, val x: Map<Int, Float>, val row: Map<Int, Int>) {
+        val cols: Float get() = x.values.max() + 1
+        val rows: Int get() = row.values.max() + 1
+    }
+
+    fun algLayout(a: Int): AlgLayout {
+        val g = alg(a)
+        val x = HashMap<Int, Float>()
+        val row = HashMap<Int, Int>()
+        // a row above the highest operator it modulates, so every line runs upwards
+        fun depth(op: Int): Int = row[op] ?: (g.targets(op).maxOfOrNull { depth(it) + 1 } ?: 0).also { row[op] = it }
+        for (op in 1..6) depth(op)
+        var next = 0f
+        fun place(op: Int): Float {
+            x[op]?.let { return it }
+            val xs = g.mods[op].orEmpty().filter { it !in x }.map { place(it) }
+            val at = if (xs.isEmpty()) next++ else xs.average().toFloat()
+            x[op] = at
+            return at
+        }
+        for (c in g.carriers) place(c)
+        for (op in 1..6) place(op)
+        // a modulator of several operators (with none of its own) moves over their middle when that spot is free
+        for (op in 1..6) {
+            val t = g.targets(op)
+            if (t.size < 2 || g.mods[op] != null) continue
+            val want = t.map { x.getValue(it) }.average().toFloat()
+            if (x.none { (o, ox) -> o != op && row[o] == row[op] && kotlin.math.abs(ox - want) < 1f }) x[op] = want
+        }
+        return AlgLayout(g, x, row)
+    }
+
     /** An operator's frequency as text: x ratio, or Hz for a fixed one. */
     fun freqText(v: IntArray, n: Int): String {
         val fc = v[at(n, "FC")]; val ff = v[at(n, "FF")]

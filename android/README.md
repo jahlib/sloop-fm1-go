@@ -18,6 +18,11 @@ com.sloop.go
 │  ├─ Requests.kt    request builders + replyMatches
 │  ├─ Replies.kt     reply/push parsers + data classes
 │  └─ Fm6.kt         FM6 (DX7) patch model, SysEx import/export
+├─ audio/
+│  ├─ Audio.kt       Samples page: file decode, mic capture, zone preview
+│  ├─ UsbRecorder.kt Recorder page: the FM-1's USB audio input -> WAV / FLAC (thread, destinations)
+│  ├─ Wav.kt         WAV header + 16/24-bit PCM / 32-bit float encoding
+│  └─ Flac.kt        streaming FLAC encoder (16/24 bit, mono/stereo)
 ├─ midi/
 │  └─ MidiEngine.kt  MidiManager wrapper: enumerate, open ports, SysEx reassembly, USB perm
 ├─ device/
@@ -72,11 +77,28 @@ reported and discarded on disconnect. App-process death also loses queued edits 
   bipolar arc; hold a knob and confirm to take the LFO off it. While assigned, the app writes the knob's base value
   plus the LFO to the FM-1 through the normal parameter queue (turning the knob moves its base; a change made on
   the FM-1 becomes the new base). Assignments are kept on the phone.
-- **Mixer**: per-track level, mute, and selecting the track to edit.
-- **Device**: pick/connect/disconnect a MIDI device, firmware info.
+- **Mixer**: per-track level, mute, and selecting the track to edit. Strips fill the height under the pinned header; the
+  fader takes what the fixed rows leave, and button height and fader thumb scale with the room in dp.
+- **Recorder**: the FM-1's USB audio (SLOOP / Felucca UAC1 input: the master out, stereo 16 bit at 44.1 or 48 kHz, as
+  set by the FM-1's AUDIO > USB RATE) read with `AudioRecord` pinned to the USB input device (`setPreferredDevice`,
+  float capture, `UNPROCESSED` source where offered) and streamed to a WAV or FLAC file from its own thread
+  (`audio/UsbRecorder.kt`, `audio/Wav.kt`, `audio/Flac.kt`). WAV: 16 / 24 bit PCM or 32 bit float; FLAC: 16 / 24 bit
+  through the app's own streaming encoder (Android has no FLAC file writer before 8.0): 4096-sample blocks, fixed
+  predictors 0..4, partitioned Rice residuals, the cheapest of L/R, L/S, R/S, M/S per block, CRC-8 / CRC-16 and the
+  MD5 in STREAMINFO — about `flac -1`. Stereo or mono (L + R mean); integer formats scale by 2^(bits-1), so the 16-bit
+  stream lands bit for bit. The header is written first with an unknown length (FLAC: length / MD5 0) and patched on
+  stop (a folder that cannot seek keeps the placeholder, which players accept); a WAV stops at 4 GB, a FLAC does not. Files go to `Music/Sloop Go` through the media store (Android 10+; the app's own Music folder before)
+  or to a folder picked with the system picker (persisted SAF permission). The recorder lives in the ViewModel and is polled
+  from `App`, so a take goes on across page changes; closing the app (`onCleared`) stops it and finishes the file.
+  Needs the `RECORD_AUDIO` permission.
+- **Device**: pick/connect/disconnect a MIDI device, firmware info; the Interface block at the bottom sets the theme
+  (System / Dark / Light, `ThemeMode` in `UiPrefs.kt`, kept in the `ui` SharedPreferences and applied by `SloopTheme`).
 
-Also: **FM6 patches** (list/load/store/erase, DX7 SysEx import/export from phone storage, full six-operator editor) and, for
-SLOOP 2.4, per-step nudge / fill / parameter locks in the step editor. SLOOP 2.6's new parameters (INSERT, LFO 2,
+Also: **FM6 patches** (list/load/store/erase, DX7 SysEx import/export from phone storage, full six-operator editor with the
+algorithm drawn as a chain of boxes from `Fm6.alg` / `Fm6.algLayout`, and compact operator cards of dense knobs) and, for
+SLOOP 2.4, per-step nudge / fill / parameter locks in the step editor. Knob size follows the screen's dp (`UiScale.kt`:
+`knobSizeFor()` provides `LocalKnob`, `LocalDenseKnobs` writes the value inside the knob), so a dense or zoomed display gets
+smaller knobs rather than a larger layout. SLOOP 2.6's new parameters (INSERT, LFO 2,
 ENV SYNC, ANALOG filter TYPE, global MIDI and TEXTURE) are on the Sound page; they only appear on a 2.6 device. SLOOP 2.7 (protocol v12): GLO > MIDI 3, drum TUNE / DECAY, the FM-1's real
 Play / Stop state and playhead (polled through `LIVE`, command 77) and looping sample zones (zone `looped` = 2).
 SLOOP 2.8 (protocol still v12, 50 globals): the punch-in FX fade (global 49) is on the Sound page's FX group and only

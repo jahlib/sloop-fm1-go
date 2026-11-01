@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -72,6 +73,7 @@ fun ConnectScreen(vm: SloopViewModel, state: DeviceState) {
             item {
                 InfoCard("This Android device has no MIDI support. A USB-host (OTG) capable phone is required.")
             }
+            item { AppearanceCard(vm) }
             return@LazyColumn
         }
 
@@ -192,6 +194,26 @@ fun ConnectScreen(vm: SloopViewModel, state: DeviceState) {
                             else -> "Check for updates"
                         })
                     }
+                }
+            }
+        }
+
+        item { AppearanceCard(vm) }
+    }
+}
+
+/** Interface settings, the last block of the page: the colour theme follows the phone or is forced dark / light. */
+@Composable
+private fun AppearanceCard(vm: SloopViewModel) {
+    Card(Modifier.fillMaxWidth().padding(16.dp, 12.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Interface", style = MaterialTheme.typography.titleMedium)
+            Text("Theme: follow the phone's dark / light setting, or keep the app dark or light whatever the phone does. " +
+                "The choice is remembered.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ThemeMode.entries.forEach { m ->
+                    FilterChip(selected = vm.ui.theme == m, onClick = { vm.ui.pickTheme(m) }, label = { Text(m.label) })
                 }
             }
         }

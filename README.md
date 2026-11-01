@@ -70,10 +70,16 @@ from Sloop Go. The **Updates** block at the bottom of the **Device** page runs t
 loading a longer clip grows the pattern length to fit it). Only the notes are stored,
   never the sound or knob positions. A **MIDI patterns** page renames, deletes and loads them onto any track.
 - **FM6 patches** (SLOOP 2.4) — slot library, DX7 SysEx import / export from phone storage, upload to the bank or to a
-  track, and a full six-operator editor in Sound-style knob blocks: per-operator envelope previews, carriers and
-  feedback marking, LFO and pitch-EG blocks, double-tap a knob to restore the init value. **Live / Store** like in the
-  sequencer: Live sends every change to the track at once, Store keeps edits on the phone until **SEND**, which sits
-  next to the menu button in the pinned top-left cluster so it is always in reach.
+  track, and a full six-operator editor. The chosen **algorithm is drawn as the usual FM chain**: operator boxes with
+  each modulator above what it modulates, carriers filled and joined by the output line, the feedback loop in orange,
+  a level bar in every box; tap a box to jump to its operator card, step through the 32 algorithms or pick one from a
+  picture grid. The six operator cards are compact (three rows of eight knobs, the envelope sketched in the free slots)
+  and sit two or three to a row, with the LFO and pitch EG side by side; double-tap a knob to restore the init value.
+  **Live / Store** like in the sequencer: Live sends every change to the track at once, Store keeps edits on the phone
+  until **SEND**, which sits next to the menu button in the pinned top-left cluster so it is always in reach.
+- **Display density** — knobs are sized from the screen's room in dp, not its pixels: a high-density or zoomed display
+  gets smaller knobs so as much as possible still fits (the FM6 page packs them tightest), and a big screen never gets
+  bigger ones.
 - **Drum synth** (SLOOP 2.5) — the four synthesised kits SYN1–SYN4 in Sound-style knob blocks, heard while editing. A pinned top bar holds play/stop, the menu, the SYN picker, the
   kit name and Reset; the 16 sound pads are pinned along the bottom — hold a pad to hear your knob edits —
   the knobs scroll between.
@@ -86,9 +92,15 @@ loading a longer clip grows the pattern length to fit it). Only the notes are st
   each file to its note (root from the file name, the rest of the keyboard splits itself). Everything
   is normalized, resampled to 22050 Hz and encoded to IMA ADPCM in-app, then written to the FM-1 over the editor
   protocol with progress — ready to play via SAMPLE on a track.
-- **Mixer** — four vertical channel strips with faders, Mute and Edit.
+- **Mixer** — vertical channel strips with faders, Mute and Edit. They fill the whole height under the pinned top bar,
+  so the faders stay in reach however dense the display or large its size setting is.
+- **Recorder** — records the FM-1's USB audio out (the master, the same stream a computer records in a DAW) into WAV
+  or lossless FLAC files on the phone: 44.1 / 48 kHz, 16-bit or 24-bit (WAV also 32-bit float), stereo or mono, saved to Music/Sloop Go or any
+  folder you pick, with a file name prefix. Peak meters with a clip hold, an input test that only meters, Share for the
+  last take. A take goes on while you switch pages; closing the app stops it and keeps the file.
 - **Device** — connection and firmware info. Play / Stop and the page menu are pinned in the top-left corner of every
-  page and wake up once the FM-1 is connected.
+  page and wake up once the FM-1 is connected. The **Interface** block at the bottom sets the theme: follow the phone,
+  or keep the app dark or light; the choice is remembered across restarts.
 - **Undo / redo** — the first row of the page menu. Every edit (knobs, mixer, steps and notes, per-step nudge / fill /
   locks, FM6 voice, drum synth sounds and kits, song order) is also noted in the phone's RAM; undo sends the earlier
   value through the same request queue as a normal edit. The history is dropped on disconnect, and parts of it when an

@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="updates" path="updates/" />
+    <!-- USB recorder takes on Android 9 and older (newer ones go to Music/Sloop Go through the media store). -->
+    <external-files-path name="recordings" path="Music/" />
 </paths>

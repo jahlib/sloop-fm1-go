@@ -30,6 +30,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Equalizer
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GraphicEq
@@ -103,6 +105,7 @@ private enum class Tab(val title: String, val icon: ImageVector) {
     DRUMSYNTH("Drum synth", Icons.Filled.Album),
     FM6("FM6 patches", Icons.Filled.GraphicEq),
     MIDI("MIDI patterns", Icons.Filled.FolderOpen),
+    REC("Recorder", Icons.Filled.FiberManualRecord),
     SETTINGS("Device", Icons.Filled.Settings),
 }
 
@@ -120,6 +123,10 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
         if (autoConnect && state.link == Link.DISCONNECTED) vm.connectPreferred()
     }
 
+    // the USB recorder runs whatever page is open (it lives in the ViewModel and stops when the app closes): poll it here
+    val rec = vm.usbRec
+    LaunchedEffect(rec.active) { while (rec.active) { rec.poll(); delay(50) } }
+
     val navMenu: @Composable () -> Unit = {
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             // the menu stays open, so several steps can be undone in a row
@@ -134,8 +141,10 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
             HorizontalDivider()
             Tab.entries.forEach { t ->
                 DropdownMenuItem(
-                    text = { Text(t.title) },
-                    leadingIcon = { Icon(t.icon, contentDescription = null) },
+                    text = { Text(if (t == Tab.REC && rec.recording) "${t.title}  ● REC" else t.title) },
+                    leadingIcon = { Icon(t.icon, contentDescription = null,
+                        tint = if (t == Tab.REC && rec.recording) MaterialTheme.colorScheme.error
+                            else LocalContentColor.current) },
                     onClick = { tab = t; menuOpen = false },
                 )
             }
@@ -179,7 +188,7 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
         }
     }
 
-    CompositionLocalProvider(LocalFavorites provides favs) {
+    CompositionLocalProvider(LocalFavorites provides favs, LocalKnob provides knobSizeFor()) {
     Scaffold { padding ->
       Row(Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)) {
         AnimatedVisibility(favs.open && state.link == Link.READY, enter = expandHorizontally(),
@@ -193,18 +202,21 @@ fun App(vm: SloopViewModel, autoConnect: Boolean) {
                 Tab.PARAMS -> ParamsScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.SEQ -> SequencerScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.LIVE -> LiveScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
-                Tab.FM6 -> Fm6Screen(vm, state, onDevice = { tab = Tab.SETTINGS })
+                Tab.FM6 -> Fm6Screen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.SAMPLES -> SamplesScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.DRUMSYNTH -> DrumSynthScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
                 Tab.SONG -> SongScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
                 Tab.MIDI -> MidiBrowserScreen(vm, state, openSequencer = { tab = Tab.SEQ }, nav = navButtons)
-                Tab.MIX -> MixerScreen(vm, state, onDevice = { tab = Tab.SETTINGS })
+                Tab.MIX -> MixerScreen(vm, state, onDevice = { tab = Tab.SETTINGS }, nav = navButtons)
+                Tab.REC -> RecorderScreen(vm, state, nav = navButtons)
                 Tab.SETTINGS -> ConnectScreen(vm, state)
             }
             // the sequencer embeds the cluster in its control row only once the device info is loaded
+            // (the recorder always: it needs only the USB audio, not the editor link)
             val ready = state.link == Link.READY && state.info != null
-            val seqHasNav = ready && (tab == Tab.SEQ || tab == Tab.SAMPLES || tab == Tab.LIVE || tab == Tab.PARAMS || tab == Tab.MIDI ||
-                (tab == Tab.DRUMSYNTH && (state.info?.proto ?: 0) >= 10))
+            val seqHasNav = tab == Tab.REC || ready && (tab == Tab.SEQ || tab == Tab.SAMPLES || tab == Tab.LIVE || tab == Tab.PARAMS || tab == Tab.MIDI ||
+                (tab == Tab.DRUMSYNTH && (state.info?.proto ?: 0) >= 10) || (tab == Tab.FM6 && state.fm6Supported) ||
+                (tab == Tab.MIX && state.tracks != null))
             if (!seqHasNav) {
                 Surface(Modifier.align(Alignment.TopStart).padding(6.dp),
                     shape = RoundedCornerShape(16.dp),

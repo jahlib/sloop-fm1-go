@@ -14,6 +14,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.border
@@ -36,6 +37,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -50,6 +52,7 @@ import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.sloop.go.proto.Desc
 import kotlin.math.PI
 import kotlin.math.abs
@@ -63,27 +66,35 @@ fun ParamControl(desc: Desc?, value: Int, text: String? = null, onFinished: (() 
                  onLongPress: (() -> Unit)? = null, lfo: KnobLfo? = null, onChange: (Int) -> Unit) {
     if (desc == null) return
     val longPress by rememberUpdatedState(onLongPress)
+    val knob = LocalKnob.current
+    val dense = LocalDenseKnobs.current
+    val shown = text ?: formatValue(desc, value)
     Column(Modifier.fillMaxWidth().then(if (onLongPress == null) Modifier else Modifier.pointerInput(desc.id) {
         detectTapGestures(onLongPress = { longPress?.invoke() })
-    }).padding(horizontal = 3.dp, vertical = 4.dp),
+    }).padding(horizontal = if (dense) 1.dp else 2.dp, vertical = if (dense) 1.dp else 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(desc.label.ifBlank { "P${desc.id}" }, style = MaterialTheme.typography.labelSmall,
+        Text(desc.label.ifBlank { "P${desc.id}" },
+            style = MaterialTheme.typography.labelSmall.let { if (dense) it.copy(fontSize = 9.sp, lineHeight = 10.sp) else it },
             maxLines = 1, overflow = TextOverflow.Ellipsis)
-        when {
-            isToggle(desc) -> Switch(checked = value != 0,
-                onCheckedChange = { onChange(if (it) desc.max else desc.min) })
-            isEnum(desc) -> EnumChips(desc, value, onChange)
-            else -> Knob(desc, value, onChange, onFinished, lfo)
+        // every kind of control takes the knob's height, so a row of mixed controls lines up
+        Box(Modifier.height(knob), contentAlignment = Alignment.Center) {
+            when {
+                isToggle(desc) -> Switch(checked = value != 0, modifier = Modifier.scale((knob / 48.dp).coerceIn(0.7f, 1f)),
+                    onCheckedChange = { onChange(if (it) desc.max else desc.min) })
+                isEnum(desc) -> EnumChips(desc, value, onChange, if (dense) shown else null)
+                else -> Knob(desc, value, onChange, onFinished, lfo, if (dense) shown else null)
+            }
         }
-        Text(text ?: formatValue(desc, value), style = MaterialTheme.typography.labelSmall,
+        if (!dense) Text(shown, style = MaterialTheme.typography.labelSmall,
             fontFamily = SloopFontFamily, color = MaterialTheme.colorScheme.primary,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
+/** With [inside] (dense knobs) the value is written in the knob instead of under it, and the pointer line gives way. */
 @Composable
 private fun Knob(desc: Desc, value: Int, onChange: (Int) -> Unit, onFinished: (() -> Unit)? = null,
-                 lfo: KnobLfo? = null) {
+                 lfo: KnobLfo? = null, inside: String? = null) {
     val finished by rememberUpdatedState(onFinished)
     val density = LocalDensity.current
     val latestValue by rememberUpdatedState(value)
@@ -92,7 +103,9 @@ private fun Knob(desc: Desc, value: Int, onChange: (Int) -> Unit, onFinished: ((
     val track = MaterialTheme.colorScheme.outline
     val surface = MaterialTheme.colorScheme.surfaceVariant
     val fraction = ((value - desc.min).toFloat() / (desc.max - desc.min).coerceAtLeast(1)).coerceIn(0f, 1f)
-    Canvas(Modifier.size(64.dp).semantics {
+    val knob = LocalKnob.current
+    Box(contentAlignment = Alignment.Center) {
+    Canvas(Modifier.size(knob).semantics {
         progressBarRangeInfo = ProgressBarRangeInfo(value.toFloat(), desc.min.toFloat()..desc.max.toFloat())
         setProgress { v -> onChange(v.roundToInt().coerceIn(desc.min, desc.max)); true }
     }.pointerInput(desc.scope, desc.id, desc.min, desc.max) {
@@ -119,27 +132,35 @@ private fun Knob(desc: Desc, value: Int, onChange: (Int) -> Unit, onFinished: ((
         val origin = Offset(size.width / 2f, size.height / 2f)
         val corner = Offset(origin.x - radius, origin.y - radius)
         val diameter = Size(radius * 2, radius * 2)
-        val width = 5.dp.toPx()
+        val width = size.minDimension * 0.08f                      // strokes scale with the knob (5 dp at 64 dp)
         drawCircle(surface, radius = radius * 0.82f, center = origin)
         drawArc(track, startAngle = 150f, sweepAngle = 240f, useCenter = false,
             topLeft = corner, size = diameter, style = Stroke(width, cap = StrokeCap.Round))
         drawArc(primary, startAngle = 150f, sweepAngle = 240f * fraction, useCenter = false,
             topLeft = corner, size = diameter, style = Stroke(width, cap = StrokeCap.Round))
-        val angle = (150f + 240f * fraction) * PI / 180.0
-        val dir = Offset(cos(angle).toFloat(), sin(angle).toFloat())
-        drawLine(primary, origin + dir * (radius * 0.38f), origin + dir * (radius * 0.75f),
-            strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
+        if (inside == null) {
+            val angle = (150f + 240f * fraction) * PI / 180.0
+            val dir = Offset(cos(angle).toFloat(), sin(angle).toFloat())
+            drawLine(primary, origin + dir * (radius * 0.38f), origin + dir * (radius * 0.75f),
+                strokeWidth = width * 0.6f, cap = StrokeCap.Round)
+        }
         if (lfo != null) {
             val ring = radius * 1.2f
             val lo = (fraction - lfo.swing).coerceIn(0f, 1f)
             val hi = (fraction + lfo.swing).coerceIn(0f, 1f)
             drawArc(lfo.color.copy(alpha = 0.5f), startAngle = 150f + 240f * lo, sweepAngle = 240f * (hi - lo),
                 useCenter = false, topLeft = Offset(origin.x - ring, origin.y - ring), size = Size(ring * 2, ring * 2),
-                style = Stroke(3.dp.toPx(), cap = StrokeCap.Round))
+                style = Stroke(width * 0.6f, cap = StrokeCap.Round))
             val live = (fraction + lfo.live() * lfo.swing).coerceIn(0f, 1f)
             val la = (150f + 240f * live) * PI / 180.0
-            drawCircle(lfo.color, 3.5.dp.toPx(), origin + Offset(cos(la).toFloat(), sin(la).toFloat()) * ring)
+            drawCircle(lfo.color, width * 0.7f, origin + Offset(cos(la).toFloat(), sin(la).toFloat()) * ring)
         }
+    }
+    if (inside != null) {
+        val fs = with(density) { (knob * 0.27f).toSp() }
+        Text(inside, fontSize = fs, lineHeight = fs * 1.2f, fontFamily = SloopFontFamily, color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1, softWrap = false)
+    }
     }
 }
 
@@ -161,11 +182,11 @@ fun LfoAmountKnob(desc: Desc, pct: Int, color: Color, assigned: Boolean, onPct: 
     var dragged by remember(desc.scope, desc.id) { mutableFloatStateOf(pct.toFloat()) }
     val surface = MaterialTheme.colorScheme.surfaceVariant
     val track = MaterialTheme.colorScheme.outline
-    Column(Modifier.fillMaxWidth().padding(horizontal = 3.dp, vertical = 4.dp),
+    Column(Modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
         Text(desc.label.ifBlank { "P${desc.id}" }, style = MaterialTheme.typography.labelSmall,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Canvas(Modifier.size(64.dp).border(1.5.dp, color.copy(alpha = if (assigned) 1f else 0.55f), RoundedCornerShape(10.dp))
+        Canvas(Modifier.size(LocalKnob.current).border(1.5.dp, color.copy(alpha = if (assigned) 1f else 0.55f), RoundedCornerShape(10.dp))
             .pointerInput(desc.scope, desc.id) {
                 val travel = with(density) { 180.dp.toPx() }
                 detectDragGestures(
@@ -184,7 +205,7 @@ fun LfoAmountKnob(desc: Desc, pct: Int, color: Color, assigned: Boolean, onPct: 
             val origin = Offset(size.width / 2f, size.height / 2f)
             val corner = Offset(origin.x - radius, origin.y - radius)
             val diameter = Size(radius * 2, radius * 2)
-            val width = 5.dp.toPx()
+            val width = size.minDimension * 0.08f
             val f = pct / 100f
             drawCircle(surface, radius = radius * 0.82f, center = origin)
             drawArc(track, startAngle = 150f, sweepAngle = 240f, useCenter = false,
@@ -194,7 +215,7 @@ fun LfoAmountKnob(desc: Desc, pct: Int, color: Color, assigned: Boolean, onPct: 
             val angle = (270f + 120f * f) * PI / 180.0
             val dir = Offset(cos(angle).toFloat(), sin(angle).toFloat())
             drawLine(color, origin + dir * (radius * 0.38f), origin + dir * (radius * 0.75f),
-                strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
+                strokeWidth = width * 0.6f, cap = StrokeCap.Round)
         }
         Text(if (assigned) "${if (pct > 0) "+" else ""}$pct%" else "—", style = MaterialTheme.typography.labelSmall,
             fontFamily = SloopFontFamily, color = color, maxLines = 1)
@@ -212,11 +233,11 @@ fun TextParamControl(desc: Desc, value: Int, onChange: (Int) -> Unit) {
     var dragged by remember(desc.scope, desc.id) { mutableFloatStateOf(value.toFloat()) }
     var editing by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 3.dp, vertical = 4.dp),
+    Column(Modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
         Text(desc.label.ifBlank { "P${desc.id}" }, style = MaterialTheme.typography.labelSmall,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Box(Modifier.size(64.dp)
+        Box(Modifier.size(LocalKnob.current)
             .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
             .pointerInput(desc.scope, desc.id, desc.min, desc.max) {
                 val travel = with(density) { 640.dp.toPx() }
@@ -263,12 +284,21 @@ fun TextParamControl(desc: Desc, value: Int, onChange: (Int) -> Unit) {
     )
 }
 
+/** A dropdown; with [inside] (dense controls) the current choice is the button's face, in a small outlined chip. */
 @Composable
-private fun EnumChips(desc: Desc, value: Int, onChange: (Int) -> Unit) {
+private fun EnumChips(desc: Desc, value: Int, onChange: (Int) -> Unit, inside: String? = null) {
     var open by remember { mutableStateOf(false) }
     Box {
-        Text("▾", Modifier.clickable { open = true }
-            .padding(horizontal = 12.dp, vertical = 12.dp), color = MaterialTheme.colorScheme.primary,
+        if (inside != null) {
+            val fs = with(LocalDensity.current) { (LocalKnob.current * 0.25f).toSp() }
+            Box(Modifier.height(LocalKnob.current * 0.64f)
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(6.dp))
+                .clickable { open = true }.padding(horizontal = 4.dp), contentAlignment = Alignment.Center) {
+                Text(inside, fontSize = fs, lineHeight = fs * 1.2f, fontFamily = SloopFontFamily,
+                    color = MaterialTheme.colorScheme.primary, maxLines = 1, softWrap = false)
+            }
+        } else Text("▾", Modifier.clickable { open = true }
+            .padding(horizontal = 12.dp, vertical = 6.dp), color = MaterialTheme.colorScheme.primary,
             style = MaterialTheme.typography.bodyMedium, maxLines = 1)
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             desc.names.forEachIndexed { i, label ->
@@ -280,9 +310,13 @@ private fun EnumChips(desc: Desc, value: Int, onChange: (Int) -> Unit) {
     }
 }
 
-/** A vertical fader: the whole length is touch-sensitive, a touch jumps to its height and a drag follows it. */
+/**
+ * A vertical fader: the whole length is touch-sensitive, a touch jumps to its height and a drag follows it. [scale]
+ * shrinks the thumb, the track and the margins at its ends (a dense or zoomed display has fewer dp to spend).
+ */
 @Composable
-fun VerticalSlider(value: Int, min: Int, max: Int, onChange: (Int) -> Unit, modifier: Modifier = Modifier) {
+fun VerticalSlider(value: Int, min: Int, max: Int, onChange: (Int) -> Unit, modifier: Modifier = Modifier,
+                   scale: Float = 1f) {
     val density = LocalDensity.current
     val latest by rememberUpdatedState(onChange)
     val span = (max - min).coerceAtLeast(1)
@@ -290,8 +324,8 @@ fun VerticalSlider(value: Int, min: Int, max: Int, onChange: (Int) -> Unit, modi
     val track = MaterialTheme.colorScheme.outline
     val thumb = MaterialTheme.colorScheme.onPrimary
     val frac = ((value - min).toFloat() / span).coerceIn(0f, 1f)
-    Canvas(modifier.fillMaxWidth().pointerInput(min, max) {
-        val pad = with(density) { 16.dp.toPx() }
+    Canvas(modifier.fillMaxWidth().pointerInput(min, max, scale) {
+        val pad = with(density) { (16.dp * scale).toPx() }
         fun at(y: Float): Int =
             (min + (1f - ((y - pad) / (size.height - 2 * pad).coerceAtLeast(1f)).coerceIn(0f, 1f)) * span).roundToInt()
         awaitEachGesture {
@@ -301,15 +335,16 @@ fun VerticalSlider(value: Int, min: Int, max: Int, onChange: (Int) -> Unit, modi
             drag(down.id) { c -> latest(at(c.position.y)); c.consume() }
         }
     }) {
-        val pad = 16.dp.toPx()
+        val pad = 16.dp.toPx() * scale
         val cx = size.width / 2f
         val h = (size.height - 2 * pad).coerceAtLeast(1f)
-        val w = 10.dp.toPx()
+        val w = 10.dp.toPx() * scale
         drawRoundRect(track.copy(alpha = 0.5f), Offset(cx - w / 2, pad), Size(w, h), CornerRadius(w / 2))
         val ty = pad + h * (1f - frac)
         drawRoundRect(primary, Offset(cx - w / 2, ty), Size(w, pad + h - ty), CornerRadius(w / 2))
-        val tw = 44.dp.toPx(); val th = 26.dp.toPx()
-        drawRoundRect(primary, Offset(cx - tw / 2, ty - th / 2), Size(tw, th), CornerRadius(8.dp.toPx()))
-        drawLine(thumb, Offset(cx - tw / 4, ty), Offset(cx + tw / 4, ty), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+        val tw = 44.dp.toPx() * scale; val th = 26.dp.toPx() * scale
+        drawRoundRect(primary, Offset(cx - tw / 2, ty - th / 2), Size(tw, th), CornerRadius(8.dp.toPx() * scale))
+        drawLine(thumb, Offset(cx - tw / 4, ty), Offset(cx + tw / 4, ty), strokeWidth = 2.dp.toPx() * scale.coerceAtLeast(0.75f),
+            cap = StrokeCap.Round)
     }
 }

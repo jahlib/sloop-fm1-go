@@ -33,6 +33,8 @@ class SloopViewModel(app: Application) : AndroidViewModel(app) {
     val dsyn = DrumSynthEditor(controller.history)
     val patterns = PatternStore(app).also { it.seedDefaults() }
     val song = SongEditor(controller.history)
+    val usbRec = RecorderEditor(app)
+    val ui = UiPrefs(app)
 
     /** Work that must outlive the page that started it (a bank upload, a flash write). */
     private val jobs = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -160,6 +162,7 @@ class SloopViewModel(app: Application) : AndroidViewModel(app) {
     fun disconnect() = controller.disconnect()
 
     override fun onCleared() {
+        usbRec.release()
         jobs.cancel()
         lfoScope.cancel()
         controller.release()

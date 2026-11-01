@@ -35,8 +35,8 @@ class MainActivity : ComponentActivity() {
         val launchedFromUsb = intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED
 
         setContent {
-            SloopTheme {
-                val vm: SloopViewModel = viewModel()
+            val vm: SloopViewModel = viewModel()
+            SloopTheme(vm.ui.theme) {
                 var showingSplash by rememberSaveable { mutableStateOf(true) }
                 LaunchedEffect(Unit) {
                     vm.refreshDevices()
