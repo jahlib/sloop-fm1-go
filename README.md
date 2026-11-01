@@ -7,24 +7,24 @@ Every release is tested on my own phone, connected to my own FM-1 running the la
 
 <table>
   <tr>
+    <td><img src="screenshots/0.png" alt="Sloop Go" /></td>
     <td><img src="screenshots/1.png" alt="Sound editor" /></td>
     <td><img src="screenshots/2.png" alt="Drum grid" /></td>
-    <td><img src="screenshots/3.png" alt="Piano roll" /></td>
   </tr>
   <tr>
+    <td><img src="screenshots/3.png" alt="Piano roll" /></td>
     <td><img src="screenshots/4.png" alt="FM6 patches" /></td>
     <td><img src="screenshots/5.png" alt="Samples" /></td>
-    <td><img src="screenshots/6.png" alt="Drum synth" /></td>
   </tr>
   <tr>
+    <td><img src="screenshots/6.png" alt="Drum synth" /></td>
     <td><img src="screenshots/7.png" alt="Song" /></td>
     <td><img src="screenshots/8.png" alt="MIDI patterns" /></td>
-    <td><img src="screenshots/9.png" alt="Mixer" /></td>
   </tr>
   <tr>
+    <td><img src="screenshots/9.png" alt="Mixer" /></td>
     <td><img src="screenshots/10.png" alt="Recorder" /></td>
     <td><img src="screenshots/11.png" alt="Device" /></td>
-    <td></td>
   </tr>
 </table>
 
