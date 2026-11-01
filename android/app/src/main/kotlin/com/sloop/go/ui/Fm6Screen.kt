@@ -244,21 +244,23 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, nav:
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Box(Modifier.height(32.dp), contentAlignment = Alignment.CenterStart) {
+                                Box(Modifier.height(ROW_H), contentAlignment = Alignment.CenterStart) {
                                     Text("Track", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                                 }
                                 for (t in 0 until ntrk) {
                                     val eng = state.trackEngine(t)
-                                    FilterChip(selected = t == track, onClick = { ed.track = t },
-                                        label = { Text("${t + 1}" + if (eng == state.fm6Engine) " · FM6"
-                                            else info.engines.getOrNull(eng)?.let { " · $it" } ?: "") })
+                                    Box(Modifier.height(ROW_H), contentAlignment = Alignment.Center) {
+                                        FilterChip(selected = t == track, onClick = { ed.track = t },
+                                            label = { Text("${t + 1}" + if (eng == state.fm6Engine) " · FM6"
+                                                else info.engines.getOrNull(eng)?.let { " · $it" } ?: "") })
+                                    }
                                 }
                                 Cb("Read from track", trackIsFm6 && !ed.busy) { op { readTrack(false) } }
                                 Cb("Send to track", trackIsFm6 && !ed.busy, filled = true) { op { sendTrack(false) } }
                             }
                             if (!trackIsFm6) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Box(Modifier.height(32.dp), contentAlignment = Alignment.CenterStart) {
+                                Box(Modifier.height(ROW_H), contentAlignment = Alignment.CenterStart) {
                                     Text("Track ${track + 1} does not play FM6, so a patch would not sound on it.",
                                         style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                                 }
@@ -271,11 +273,11 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, nav:
                                 }
                             }
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Box(Modifier.height(32.dp), contentAlignment = Alignment.CenterStart) {
+                                Box(Modifier.height(ROW_H), contentAlignment = Alignment.CenterStart) {
                                     Text("Slot", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                                 }
                                 var open by remember { mutableStateOf(false) }
-                                Box {
+                                Box(Modifier.height(ROW_H), contentAlignment = Alignment.Center) {
                                     OutlinedButton(onClick = { open = true }, modifier = Modifier.height(32.dp),
                                         contentPadding = TIGHT) {
                                         Text(slotLabel(slot) + "  ▾", maxLines = 1, fontFamily = SloopFontFamily)
@@ -373,7 +375,7 @@ fun Fm6Screen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, nav:
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Box(Modifier.height(32.dp), contentAlignment = Alignment.CenterStart) {
+                                Box(Modifier.height(ROW_H), contentAlignment = Alignment.CenterStart) {
                                     Text("DX7 SysEx", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                                 }
                                 Cb("Import from phone", !ed.busy, filled = true) { opener.launch(arrayOf("*/*")) }
@@ -468,12 +470,20 @@ private fun fileName(name: String) = name.trim().ifBlank { "fm6-voice" }
 
 private val TIGHT = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
 
+/**
+ * Every item of the page's wrapping rows (labels, chips, buttons, dropdowns) sits centred in a cell this high: chips
+ * claim a 48 dp touch height and buttons 32 dp, which left them top-aligned and jumping up and down.
+ */
+private val ROW_H = 40.dp
+
 /** A short button (32 dp) for the page's rows of actions. */
 @Composable
 private fun Cb(label: String, enabled: Boolean = true, filled: Boolean = false, onClick: () -> Unit) {
     val m = Modifier.height(32.dp)
-    if (filled) Button(onClick, m, enabled, contentPadding = TIGHT) { Text(label, maxLines = 1) }
-    else OutlinedButton(onClick, m, enabled, contentPadding = TIGHT) { Text(label, maxLines = 1) }
+    Box(Modifier.height(ROW_H), contentAlignment = Alignment.Center) {
+        if (filled) Button(onClick, m, enabled, contentPadding = TIGHT) { Text(label, maxLines = 1) }
+        else OutlinedButton(onClick, m, enabled, contentPadding = TIGHT) { Text(label, maxLines = 1) }
+    }
 }
 
 /** One editable voice byte, rendered by ParamControl as a knob / switch / enum dropdown. */
@@ -565,7 +575,7 @@ private fun AlgPicker(current: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit
             Column {
                 Text("Algorithm", Modifier.padding(start = 16.dp, top = 10.dp, bottom = 2.dp),
                     style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                LazyVerticalGrid(GridCells.Adaptive(92.dp), contentPadding = PaddingValues(8.dp),
+                LazyVerticalGrid(GridCells.Adaptive(124.dp), contentPadding = PaddingValues(8.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(32) { a ->
                         val on = a == current
@@ -574,7 +584,7 @@ private fun AlgPicker(current: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit
                             .then(if (on) Modifier.border(2.dp, cs.primary, shape) else Modifier)
                             .clickable { onPick(a) }.padding(4.dp),
                             horizontalAlignment = Alignment.CenterHorizontally) {
-                            AlgDiagram(a, Modifier.fillMaxWidth().height(58.dp), labels = false)
+                            AlgDiagram(a, Modifier.fillMaxWidth().height(84.dp))
                             Text("${a + 1}", style = MaterialTheme.typography.labelMedium, fontFamily = SloopFontFamily,
                                 color = if (on) cs.primary else cs.onSurfaceVariant)
                         }

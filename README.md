@@ -21,6 +21,11 @@ Every release is tested on my own phone, connected to my own FM-1 running the la
     <td><img src="screenshots/8.png" alt="MIDI patterns" /></td>
     <td><img src="screenshots/9.png" alt="Mixer" /></td>
   </tr>
+  <tr>
+    <td><img src="screenshots/10.png" alt="Recorder" /></td>
+    <td><img src="screenshots/11.png" alt="Device" /></td>
+    <td></td>
+  </tr>
 </table>
 
 ## Install on your phone
@@ -86,8 +91,9 @@ loading a longer clip grows the pattern length to fit it). Only the notes are st
 - **Song** (SLOOP 2.5) — vertical step cards: A–D section buttons, Bars / Times steppers, move and delete, loop,
   one-tap Add step, read / send.
 - **Samples** (SLOOP 2.4) — USR1–4 user sample slots (a dropdown shows the picked one). Load audio files from phone
-  storage **or record straight from the mic** (camera / voice / raw inputs selectable) and drop the take into the
-  slot: **Chop** mode (the default) cuts one take into pieces on a touch waveform — the chop keys sit on a pinned
+  storage **or record straight from the mic** (camera / voice / raw inputs selectable — and, with the cable in, the
+  FM-1's own USB sound, listed as "USB · " and the device's name: it is read as stereo, mixed to mono and resampled, so the FM-1 can
+  resample itself) and drop the take into the slot: **Chop** mode (the default) cuts one take into pieces on a touch waveform — the chop keys sit on a pinned
   bottom strip, markers snap to hits, drag to move, per-chop keep / length, auto-fit to the slot; **Files** mode maps
   each file to its note (root from the file name, the rest of the keyboard splits itself). Everything
   is normalized, resampled to 22050 Hz and encoded to IMA ADPCM in-app, then written to the FM-1 over the editor
@@ -96,8 +102,19 @@ loading a longer clip grows the pattern length to fit it). Only the notes are st
   so the faders stay in reach however dense the display or large its size setting is.
 - **Recorder** — records the FM-1's USB audio out (the master, the same stream a computer records in a DAW) into WAV
   or lossless FLAC files on the phone: 44.1 / 48 kHz, 16-bit or 24-bit (WAV also 32-bit float), stereo or mono, saved to Music/Sloop Go or any
-  folder you pick, with a file name prefix. Peak meters with a clip hold, an input test that only meters, Share for the
-  last take. A take goes on while you switch pages; closing the app stops it and keeps the file.
+  folder you pick. The page fits one screen: file name and destination on top with the format as short dropdowns
+  beside them, and one row of displays: a **spectrum analyzer** (log frequency, filled smooth curve and a falling peak
+  line, in the style of an EQ plugin's analyzer), a compact scrolling waveform of the take (a DJ-app style
+  overview) whose **ZOOM** (10 ms to a minute across the width: look at the wave itself, or at the whole take) and
+  **SPEED** (live, or slow motion behind the live edge) are knobs beside the compressor's and the limiter's, a **pan half-circle** showing where the sound sits between left and right right now (a
+  needle, a wedge and a one-second trail) and a vertical level meter with clip hold. Each display has a small power
+  button in its header that switches it off and on: an off display is dimmed and costs no analysis or drawing, an input test that only meters (it also starts by itself while the FM-1 plays, once the microphone permission is
+  given, and ends with the playback), Share for the last take. The name is used as
+  typed (switch on "+ date" for a new file each time); if a file of that name is already there, Rec asks before
+  replacing it. A **Compressor** (threshold, ratio, attack, release, knee, make-up gain) and a look-ahead **Limiter**
+  (ceiling, release) can be switched in before the file: their knobs appear in blocks under the settings, the meters,
+  the waveform and the file all show the processed sound, and a GR readout shows how far they pull the level down. The
+  page scrolls when the blocks do not fit. A take goes on while you switch pages; closing the app stops it and keeps the file.
 - **Device** — connection and firmware info. Play / Stop and the page menu are pinned in the top-left corner of every
   page and wake up once the FM-1 is connected. The **Interface** block at the bottom sets the theme: follow the phone,
   or keep the app dark or light; the choice is remembered across restarts.

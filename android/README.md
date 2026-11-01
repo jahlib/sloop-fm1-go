@@ -19,8 +19,11 @@ com.sloop.go
 │  ├─ Replies.kt     reply/push parsers + data classes
 │  └─ Fm6.kt         FM6 (DX7) patch model, SysEx import/export
 ├─ audio/
-│  ├─ Audio.kt       Samples page: file decode, mic capture, zone preview
+│  ├─ Audio.kt       Samples page: file decode, mic capture (a USB input such as the FM-1 read as stereo → mono), zone preview
 │  ├─ UsbRecorder.kt Recorder page: the FM-1's USB audio input -> WAV / FLAC (thread, destinations)
+│  ├─ Dynamics.kt    recorder compressor + look-ahead limiter
+│  ├─ Spectrum.kt    recorder spectrum analyzer: Hann FFT -> 192 log-frequency dBFS points
+│  ├─ WaveStore.kt   recorder waveform data: raw recent audio + min/max buckets, read as columns
 │  ├─ Wav.kt         WAV header + 16/24-bit PCM / 32-bit float encoding
 │  └─ Flac.kt        streaming FLAC encoder (16/24 bit, mono/stereo)
 ├─ midi/
@@ -90,7 +93,29 @@ reported and discarded on disconnect. App-process death also loses queued edits 
   stop (a folder that cannot seek keeps the placeholder, which players accept); a WAV stops at 4 GB, a FLAC does not. Files go to `Music/Sloop Go` through the media store (Android 10+; the app's own Music folder before)
   or to a folder picked with the system picker (persisted SAF permission). The recorder lives in the ViewModel and is polled
   from `App`, so a take goes on across page changes; closing the app (`onCleared`) stops it and finishes the file.
-  Needs the `RECORD_AUDIO` permission.
+  Needs the `RECORD_AUDIO` permission. The file is named exactly as typed (`+ date` appends a timestamp); before a take
+  `RecFiles.exists` looks the name up in the destination (SAF children, MediaStore row, or File) and the page asks
+  before `RecFiles.create(..., overwrite = true)` deletes the old file. The page's waveform reads `audio/WaveStore.kt`,
+  which the recording thread fills with the audio mixed to mono: the last ~11 s as it came, and the lowest / highest
+  sample of every 64 frames for ~95 s. Each screen column is the min / max of its slice of time (`WaveStore.columns`),
+  the samples themselves up close and the overview far out. ZOOM (10 ms .. 60 s across the width) and SPEED (5..100 %;
+  100 is live, less runs the view in slow motion behind the live edge, `RecorderEditor.advanceView`) are knobs in the
+  Waveform block next to the compressor's and the limiter's. The picture always runs (also after a run ends, until it
+  has left the screen) and is drawn in one colour. While
+  the FM-1 plays (`DeviceState.playing`) the page starts an input test by itself (`RecorderEditor.autoTest`) and ends it
+  when playback stops, but only with `RECORD_AUDIO` already granted.
+  `audio/Dynamics.kt` sits between the read and the meters / file: a stereo-linked feed-forward compressor (peak follower
+  with a 10 ms release, soft knee, attack / release on the gain reduction in dB, make-up gain) and a 2 ms look-ahead
+  brick-wall limiter (minimum-hold of the needed gain over the window, released, then averaged over it, with the audio
+  delayed by window - 1 frames, so a peak never gets through). Settings live in `DynConfig`, are kept in the `usbrec`
+  preferences and may change while a take runs. The recording thread also leaves the last 16384 frames mixed to mono
+  (`UsbRecorder.copyTap`) and each block's per-channel RMS: on every poll `RecorderEditor` runs a 4096-point FFT
+  (`audio/Spectrum.kt`, bins merged onto 192 log-spaced points, 3 dB / octave tilt) into a fast-up / slow-down curve
+  with a falling peak line, and turns the RMS ratio into the pan (-1 left .. 1 right) with a one-second trail.
+  Every display card (spectrum, waveform, pan, level) has a small power button in its header (`AnalyzerCard`,
+  `RecorderEditor.views` / `RecView`, kept in the prefs): an off display is dimmed, its content is not composed, and
+  the recording thread stops collecting its data (`UsbRecorder.tapOn` / `panOn` / `waveOn`; the meter peaks still run,
+  the clip hold needs them). A display switched back on starts from fresh data.
 - **Device**: pick/connect/disconnect a MIDI device, firmware info; the Interface block at the bottom sets the theme
   (System / Dark / Light, `ThemeMode` in `UiPrefs.kt`, kept in the `ui` SharedPreferences and applied by `SloopTheme`).
 

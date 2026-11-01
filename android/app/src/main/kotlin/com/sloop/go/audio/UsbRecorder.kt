@@ -3,6 +3,7 @@
 // see NOTICE.md.
 package com.sloop.go.audio
 
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.media.AudioDeviceInfo
@@ -24,6 +25,7 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.sqrt
 
 /**
  * Records the FM-1's USB audio (SLOOP / Felucca UAC1: the master out, stereo 16 bit at 44.1 or 48 kHz) into a WAV
@@ -61,9 +63,41 @@ class UsbRecorder {
     @Volatile var peakL = 0f; private set
     @Volatile var peakR = 0f; private set
     @Volatile var clipped = false
-    @Volatile var silentSeconds = 0f; private set
     @Volatile var warning: String? = null; private set
     @Volatile var rate = 0; private set
+
+    /** Compressor and limiter of the signal path; may change while it runs. */
+    @Volatile var dynCfg = DynConfig()
+    /** How far they pull the level down right now, dB (0 or negative). */
+    @Volatile var reduction = 0f; private set
+
+    /**
+     * Which of the page's displays want data: the spectrum's tap, the pan's loudness, the waveform's store. A display
+     * that is off costs the recording thread nothing. (The meters' peaks stay: clip and silence warnings need them.)
+     */
+    @Volatile var tapOn = true
+    @Volatile var panOn = true
+    @Volatile var waveOn = true
+
+    /** The recent audio for the page's waveform, close up or as an overview (see [WaveStore]). */
+    val wave = WaveStore()
+
+    /** The loudness of each channel over the last block (RMS, 0..1), for the page's pan display. */
+    @Volatile var rmsL = 0f; private set
+    @Volatile var rmsR = 0f; private set
+
+    /** The last [TAP] frames mixed to mono (after the compressor / limiter), for the page's spectrum; [tapCount] so far. */
+    private val tap = FloatArray(TAP)
+    @Volatile var tapCount = 0L; private set
+
+    /** Fills [out] with the latest frames of the mono tap, oldest first; false while fewer than that have arrived. */
+    fun copyTap(out: FloatArray): Boolean {
+        val end = tapCount
+        if (end < out.size) return false
+        val start = end - out.size
+        for (i in out.indices) out[i] = tap[((start + i) % TAP).toInt()]
+        return true
+    }
 
     private var thread: Thread? = null
     private var result: Result? = null
@@ -92,7 +126,8 @@ class UsbRecorder {
             r.release(); runCatching { fos?.close() }; out?.discard?.invoke()
             return "The USB input did not start (is another app recording?)"
         }
-        frames = 0; bytes = 0; peakL = 0f; peakR = 0f; clipped = false; silentSeconds = 0f; warning = null
+        frames = 0; bytes = 0; peakL = 0f; peakR = 0f; clipped = false; warning = null
+        wave.reset(); tapCount = 0; rmsL = 0f; rmsR = 0f
         rate = fmt.rate; result = null
         running = true
         thread = Thread({ loop(r, float, fmt, device, out, fos, os, flac) }, "usb-recorder").also { it.start() }
@@ -120,6 +155,10 @@ class UsbRecorder {
         val buf = if (flac == null) ByteArray(block * fmt.channels * fmt.bits / 8) else ByteArray(0)
         var error: String? = null
         var routeChecked = false
+        val dyn = Dynamics(fmt.rate)
+        var tapN = 0L
+        var tapWasOn = false
+        var waveWasOn = false
         try {
             while (running) {
                 val n = if (s == null) r.read(f, 0, f.size, AudioRecord.READ_BLOCKING)
@@ -127,12 +166,29 @@ class UsbRecorder {
                 if (n < 0) { if (running) error = "The USB input stopped (error $n): is the FM-1 still connected?"; break }
                 val fr = n / 2
                 if (fr == 0) continue
+                dyn.process(f, fr, dynCfg)                          // compressor / limiter, before the meters and the file
+                reduction = dyn.reduction
                 var pl = 0f
                 var pr = 0f
                 for (i in 0 until fr) { pl = max(pl, abs(f[2 * i])); pr = max(pr, abs(f[2 * i + 1])) }
                 if (pl >= CLIP || pr >= CLIP) clipped = true
                 peakL = max(pl, peakL * 0.8f); peakR = max(pr, peakR * 0.8f)
-                silentSeconds = if (max(pl, pr) < SILENCE) silentSeconds + fr.toFloat() / fmt.rate else 0f
+                // the page's displays take their data only while they are switched on; one coming back on starts afresh
+                if (tapOn) {
+                    if (!tapWasOn) { tapN = 0; tapCount = 0; tapWasOn = true }
+                    for (i in 0 until fr) tap[(tapN++ % TAP).toInt()] = (f[2 * i] + f[2 * i + 1]) * 0.5f
+                    tapCount = tapN
+                } else tapWasOn = false
+                if (panOn) {
+                    var sl = 0f
+                    var sr = 0f
+                    for (i in 0 until fr) { sl += f[2 * i] * f[2 * i]; sr += f[2 * i + 1] * f[2 * i + 1] }
+                    rmsL = sqrt(sl / fr); rmsR = sqrt(sr / fr)
+                }
+                if (waveOn) {
+                    if (!waveWasOn) { wave.reset(); waveWasOn = true }
+                    wave.write(f, fr)
+                } else waveWasOn = false
                 if (flac != null) bytes += flac.write(f, fr)
                 else if (os != null) {
                     val nb = Wav.encode(f, fr, fmt.channels, fmt.bits, buf)
@@ -171,7 +227,7 @@ class UsbRecorder {
         synchronized(this) {
             result = Result(out?.name, out?.where, if (kept) out?.uri else null, fmt.mime, seconds, bytes, headerOk, error)
         }
-        peakL = 0f; peakR = 0f
+        peakL = 0f; peakR = 0f; reduction = 0f
         running = false
     }
 
@@ -201,8 +257,8 @@ class UsbRecorder {
     }
 
     companion object {
+        private const val TAP = 16384
         private const val CLIP = 0.9999f
-        private const val SILENCE = 1f / 32768f
         private val USB = setOf(AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET,
             AudioDeviceInfo.TYPE_USB_ACCESSORY)
 
@@ -233,8 +289,51 @@ object RecFiles {
             ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
     }.getOrNull() ?: tree.lastPathSegment ?: "Folder"
 
-    fun create(ctx: Context, tree: Uri?, name: String, mime: String = MIME): UsbRecorder.Out {
+    /** The file called [name] already in the destination (a document, a media row or a File), or null. */
+    fun find(ctx: Context, tree: Uri?, name: String): Uri? {
         val cr = ctx.contentResolver
+        if (tree != null) {
+            val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+            return runCatching {
+                cr.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { c ->
+                    var found: Uri? = null
+                    while (found == null && c.moveToNext())
+                        if (c.getString(1) == name) found = DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0))
+                    found
+                }
+            }.getOrNull()
+        }
+        if (Build.VERSION.SDK_INT >= 29) {
+            val base = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            return runCatching {
+                cr.query(base, arrayOf(MediaStore.MediaColumns._ID),
+                    "${MediaStore.MediaColumns.DISPLAY_NAME}=? AND ${MediaStore.MediaColumns.RELATIVE_PATH}=?",
+                    arrayOf(name, "${Environment.DIRECTORY_MUSIC}/$DIR/"), null)?.use { c ->
+                    if (c.moveToFirst()) ContentUris.withAppendedId(base, c.getLong(0)) else null
+                }
+            }.getOrNull()
+        }
+        return File(defaultDir(ctx), name).takeIf { it.exists() }?.let(Uri::fromFile)
+    }
+
+    /** Whether a take called [name] would replace a file. */
+    fun exists(ctx: Context, tree: Uri?, name: String) = find(ctx, tree, name) != null
+
+    private fun remove(ctx: Context, tree: Uri?, name: String) {
+        val old = find(ctx, tree, name) ?: return
+        val cr = ctx.contentResolver
+        when {
+            tree != null -> DocumentsContract.deleteDocument(cr, old)
+            Build.VERSION.SDK_INT >= 29 -> cr.delete(old, null, null)
+            else -> File(old.path ?: return).delete()
+        }
+    }
+
+    /** With [overwrite] an existing file of that name goes first (the destinations would number the new one otherwise). */
+    fun create(ctx: Context, tree: Uri?, name: String, mime: String = MIME, overwrite: Boolean = false): UsbRecorder.Out {
+        val cr = ctx.contentResolver
+        if (overwrite) runCatching { remove(ctx, tree, name) }
         if (tree != null) {
             val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
             val uri = DocumentsContract.createDocument(cr, parent, mime, name)

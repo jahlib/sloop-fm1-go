@@ -96,6 +96,8 @@ fun ParamControl(desc: Desc?, value: Int, text: String? = null, onFinished: (() 
 private fun Knob(desc: Desc, value: Int, onChange: (Int) -> Unit, onFinished: (() -> Unit)? = null,
                  lfo: KnobLfo? = null, inside: String? = null) {
     val finished by rememberUpdatedState(onFinished)
+    // the gesture below keeps running through recompositions: it must call the newest handler, not the first one
+    val commit by rememberUpdatedState(onChange)
     val density = LocalDensity.current
     val latestValue by rememberUpdatedState(value)
     var dragged by remember(desc.scope, desc.id) { mutableFloatStateOf(value.toFloat()) }
@@ -119,14 +121,14 @@ private fun Knob(desc: Desc, value: Int, onChange: (Int) -> Unit, onFinished: ((
                 dragged = (dragged - delta.y / travel * (desc.max - desc.min) * precision)
                     .coerceIn(desc.min.toFloat(), desc.max.toFloat())
                 val next = dragged.roundToInt()
-                if (next != latestValue) onChange(next)
+                if (next != latestValue) commit(next)
                 change.consume()
             },
             onDragEnd = { finished?.invoke() },
             onDragCancel = { finished?.invoke() },
         )
     }.pointerInput(desc.scope, desc.id, desc.def) {
-        detectTapGestures(onDoubleTap = { onChange(desc.def) })
+        detectTapGestures(onDoubleTap = { commit(desc.def) })
     }) {
         val radius = size.minDimension * 0.38f
         val origin = Offset(size.width / 2f, size.height / 2f)
@@ -179,6 +181,7 @@ fun LfoAmountKnob(desc: Desc, pct: Int, color: Color, assigned: Boolean, onPct: 
     val density = LocalDensity.current
     val latest by rememberUpdatedState(pct)
     val longPress by rememberUpdatedState(onLongPress)
+    val commit by rememberUpdatedState(onPct)
     var dragged by remember(desc.scope, desc.id) { mutableFloatStateOf(pct.toFloat()) }
     val surface = MaterialTheme.colorScheme.surfaceVariant
     val track = MaterialTheme.colorScheme.outline
@@ -194,12 +197,12 @@ fun LfoAmountKnob(desc: Desc, pct: Int, color: Color, assigned: Boolean, onPct: 
                     onDrag = { change, delta ->
                         dragged = (dragged - delta.y / travel * 200f).coerceIn(-100f, 100f)
                         val next = dragged.roundToInt()
-                        if (next != latest) onPct(next)
+                        if (next != latest) commit(next)
                         change.consume()
                     },
                 )
             }.pointerInput(desc.scope, desc.id) {
-                detectTapGestures(onDoubleTap = { onPct(0) }, onLongPress = { longPress() })
+                detectTapGestures(onDoubleTap = { commit(0) }, onLongPress = { longPress() })
             }) {
             val radius = size.minDimension * 0.38f
             val origin = Offset(size.width / 2f, size.height / 2f)
@@ -230,6 +233,7 @@ fun LfoAmountKnob(desc: Desc, pct: Int, color: Color, assigned: Boolean, onPct: 
 fun TextParamControl(desc: Desc, value: Int, onChange: (Int) -> Unit) {
     val density = LocalDensity.current
     val latestValue by rememberUpdatedState(value)
+    val commit by rememberUpdatedState(onChange)
     var dragged by remember(desc.scope, desc.id) { mutableFloatStateOf(value.toFloat()) }
     var editing by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf("") }
@@ -247,7 +251,7 @@ fun TextParamControl(desc: Desc, value: Int, onChange: (Int) -> Unit) {
                         dragged = (dragged - delta.y / travel * (desc.max - desc.min))
                             .coerceIn(desc.min.toFloat(), desc.max.toFloat())
                         val next = dragged.roundToInt()
-                        if (next != latestValue) onChange(next)
+                        if (next != latestValue) commit(next)
                         change.consume()
                     },
                 )

@@ -118,8 +118,16 @@ object Audio {
 
     // ---------------------------------------------------------------- mic ---
 
-    /** A microphone choice: an AudioSource preset (no device pinned) or a concrete input device. */
-    class MicOption(val label: String, val source: Int, val device: AudioDeviceInfo? = null)
+    /**
+     * A microphone choice: an AudioSource preset (no device pinned) or a concrete input device. A USB audio input
+     * ([stereo], the FM-1's own sound among them) is read as stereo and mixed down to mono, since a sound card like the
+     * FM-1 offers no mono. Two options are the same choice when they name the same input, whenever the list was made.
+     */
+    class MicOption(val label: String, val source: Int, val device: AudioDeviceInfo? = null, val stereo: Boolean = false) {
+        override fun equals(other: Any?) = other is MicOption && label == other.label && source == other.source &&
+            device?.id == other.device?.id
+        override fun hashCode() = (label.hashCode() * 31 + source) * 31 + (device?.id ?: -1)
+    }
 
     /** The plain "Mic" preset, when nothing was picked. */
     fun micDefault() = MicOption("Mic", MediaRecorder.AudioSource.MIC)
@@ -134,16 +142,19 @@ object Audio {
         )
         val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         for (d in am.getDevices(AudioManager.GET_DEVICES_INPUTS)) {
+            val usb = d.type == AudioDeviceInfo.TYPE_USB_DEVICE || d.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                d.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
             val label = when (d.type) {
                 AudioDeviceInfo.TYPE_BUILTIN_MIC ->
                     d.address?.takeIf { it.isNotBlank() }?.let { "Mic · $it" }
                 AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Headset mic"
-                AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET -> "USB mic"
+                AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_ACCESSORY ->
+                    "USB · " + (d.productName?.toString()?.takeIf { it.isNotBlank() } ?: "audio")
                 AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth mic"
                 AudioDeviceInfo.TYPE_BLE_HEADSET -> "BLE mic"
                 else -> null
             } ?: continue
-            out += MicOption(label, MediaRecorder.AudioSource.MIC, d)
+            out += MicOption(label, MediaRecorder.AudioSource.MIC, d, stereo = usb)
         }
         return out
     }
@@ -158,38 +169,51 @@ object Audio {
         private val chunks = ArrayList<ShortArray>()
         @Volatile private var total = 0
 
-        fun start(mic: MicOption): Boolean {
-            if (recording) return true
-            val min = AudioRecord.getMinBufferSize(REC_RATE,
-                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-            if (min <= 0) return false
+        /** One AudioRecord on [mic] with [ch] channels (1 or 2), or null when Android will not open it. */
+        private fun open(mic: MicOption, ch: Int): AudioRecord? {
+            val mask = if (ch == 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
+            val min = AudioRecord.getMinBufferSize(REC_RATE, mask, AudioFormat.ENCODING_PCM_16BIT)
+            if (min <= 0) return null
             val r = try {
                 AudioRecord.Builder()
                     .setAudioSource(mic.source)
                     .setAudioFormat(AudioFormat.Builder().setSampleRate(REC_RATE)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
-                    .setBufferSizeInBytes(max(min, 8192))
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(mask).build())
+                    .setBufferSizeInBytes(max(min, 8192 * ch))
                     .build()
-            } catch (e: Exception) { return false }
-            if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); return false }
-            if (mic.device != null && !r.setPreferredDevice(mic.device)) { r.release(); return false }
+            } catch (e: Exception) { return null }
+            if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); return null }
+            if (mic.device != null && !r.setPreferredDevice(mic.device)) { r.release(); return null }
+            return r
+        }
+
+        fun start(mic: MicOption): Boolean {
+            if (recording) return true
+            // a USB sound card is read as the stereo it is and mixed to mono here; mono is the fallback
+            var ch = if (mic.stereo) 2 else 1
+            val r = (if (ch == 2) open(mic, 2) else null) ?: open(mic, 1).also { ch = 1 } ?: return false
             try { r.startRecording() } catch (e: Exception) { r.release(); return false }
             chunks.clear(); total = 0; level = 0f; seconds = 0f
             rec = r
             recording = true
+            val channels = ch
             thread = Thread {
                 try {
-                    val buf = ShortArray(4096)
+                    val buf = ShortArray(4096 * channels)
                     val cap = REC_RATE * MAX_REC_SECONDS
                     while (recording && total < cap) {
-                        val n = r.read(buf, 0, min(buf.size, cap - total))
+                        val n = r.read(buf, 0, min(buf.size, (cap - total) * channels))
                         if (n <= 0) break
+                        val fr = n / channels
+                        if (fr == 0) continue
+                        val mono = ShortArray(fr) { i ->
+                            if (channels == 1) buf[i] else ((buf[2 * i] + buf[2 * i + 1]) / 2).toShort()
+                        }
                         var pk = 0
-                        for (i in 0 until n) pk = max(pk, abs(buf[i].toInt()))
+                        for (v in mono) pk = max(pk, abs(v.toInt()))
                         level = pk / 32768f
-                        chunks.add(buf.copyOf(n))
-                        total += n
+                        chunks.add(mono)
+                        total += fr
                         seconds = total.toFloat() / REC_RATE
                     }
                 } catch (_: Exception) { /* released while reading */ }

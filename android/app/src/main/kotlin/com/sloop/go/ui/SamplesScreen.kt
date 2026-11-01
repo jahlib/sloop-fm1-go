@@ -10,7 +10,12 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -182,7 +187,22 @@ fun SamplesScreen(vm: SloopViewModel, state: DeviceState, onDevice: () -> Unit, 
     }
 
     // ---- mic recording ----
-    val mics = remember { Audio.mics(ctx) }
+    // the inputs follow the cable: the FM-1's own USB sound appears here as "USB · <its name>" once it is plugged in,
+    // to resample it and load the result back into it
+    var mics by remember { mutableStateOf(Audio.mics(ctx)) }
+    DisposableEffect(Unit) {
+        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        fun refresh() {
+            mics = Audio.mics(ctx)
+            if (!ed.recording) ed.mic = mics.firstOrNull { it == ed.mic } ?: mics.first()
+        }
+        val cb = object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>?) = refresh()
+            override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>?) = refresh()
+        }
+        am.registerAudioDeviceCallback(cb, Handler(Looper.getMainLooper()))
+        onDispose { am.unregisterAudioDeviceCallback(cb) }
+    }
     if (ed.mic == null) ed.mic = mics.first()
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) ed.startRecording() else ed.say("Microphone permission denied", true)
