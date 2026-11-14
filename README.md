@@ -149,3 +149,5 @@ that it will be useful, but **WITHOUT ANY WARRANTY**; without even the implied w
 FOR A PARTICULAR PURPOSE. See [LICENSE](LICENSE) for the full text.
 
 Writing to a device can overwrite its data: back up your FM-1 first and use this software at your own risk.
+
+You can also try Sloop fm1 Go in the browser, no flashing needed, in the free community [FM-1 Emulator](https://fm1-emulator.atst.tools/).
